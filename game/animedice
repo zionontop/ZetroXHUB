@@ -20,6 +20,85 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 
+-- =============================================================================
+-- [0] SINGLETON CLEANUP (PREVENT DOUBLE-RUNNING & TERMINATE OLD INSTANCES)
+-- =============================================================================
+if getgenv().ZETROX_CLEANUP then
+    pcall(getgenv().ZETROX_CLEANUP)
+    getgenv().ZETROX_CLEANUP = nil
+    task.wait(0.1)
+end
+
+local SCRIPT_INSTANCE_ID = HttpService:GenerateGUID(false)
+getgenv().CURRENT_ZETROX_INSTANCE = SCRIPT_INSTANCE_ID
+local isScriptRunning = true
+local ScriptConnections = {}
+
+local function addConnection(conn)
+    if conn then
+        table.insert(ScriptConnections, conn)
+    end
+    return conn
+end
+
+-- Universal GUI cleanup helper
+local function purgeOldZetroXGuis()
+    local function cleanParent(parent)
+        if not parent then return end
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("ScreenGui") then
+                local n = child.Name:lower()
+                if n:find("zetrox") or n:find("obsidian") or child.Name == "ZetroX_ToggleScreenGui" then
+                    pcall(function() child:Destroy() end)
+                end
+            end
+        end
+    end
+    if gethui then pcall(function() cleanParent(gethui()) end) end
+    pcall(function() cleanParent(game:GetService("CoreGui")) end)
+    pcall(function() cleanParent(player:FindFirstChild("PlayerGui")) end)
+end
+
+-- Pre-purge any orphan UI from previous unhandled runs
+pcall(purgeOldZetroXGuis)
+
+-- Global cleanup function stored in getgenv for next run or manual unload
+getgenv().ZETROX_CLEANUP = function()
+    isScriptRunning = false
+    getgenv().CURRENT_ZETROX_INSTANCE = nil
+
+    -- Turn off active feature toggles in Config runtime to stop active actions immediately
+    if getgenv().Config then
+        local c = getgenv().Config
+        c.AutoRoll = false
+        c.AutoRebirth = false
+        c.AutoEquipBest = false
+        c.AutoClaimPlot = false
+        c.AutoBuyDice = false
+        c.AutoEquipBestDice = false
+        c.AutoSellThreshold = false
+        c.AutoSellInventory = false
+        c.AutoUpgradePlayerStats = false
+        c.AutoUpgradeUnits = false
+        c.AutoUsePotion = false
+        c.AutoTowerRoll = false
+        c.AutoRollGrades = false
+        c.AutoRollTraits = false
+        c.AutoClaimQuests = false
+        c.AutoBuyQuestShop = false
+        c.SpecialTrade = false
+    end
+
+    -- Disconnect all Roblox event connections
+    for _, conn in ipairs(ScriptConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(ScriptConnections)
+
+    -- Force-destroy any remaining ScreenGuis
+    pcall(purgeOldZetroXGuis)
+end
+
 -- Clipboard Helper
 local function copyToClipboard(text)
     if setclipboard then
@@ -66,8 +145,8 @@ end
 -- =============================================================================
 local DefaultConfig = {
     -- [0] GENERAL & LANGUAGE
-    Language = "ID",                    -- "ID" (Bahasa Indonesia) atau "EN" (English)
-    AutoSaveEnabled = true,             -- [true/false] Otomatis simpan konfigurasi setiap ada perubahan
+    Language = "EN",                    -- Default: English (Universal & Clean)
+    AutoSaveEnabled = true,             -- Auto save configuration changes
 
     -- [1] FARMING LOBBY & PLOT
     AutoRoll = false,
@@ -110,15 +189,31 @@ local DefaultConfig = {
         [23] = "10t",
         [24] = "80t",
         [25] = "250t",
+        [26] = "1qd",
+        [27] = "5qd",
     },
     AutoSellInventory = false,
     SellInventoryDelay = 25,
 
-    -- [5] AUTO TRAIT & GRADE GEMS
-    AutoTrait = false,
-    AutoGrade = false,
-    TargetUnitName = "",
-    TargetUnitUUID = "",
+    -- [5] AUTO TRAIT & GRADE
+    SelectedUnitUUID = "",
+    SelectedUnitDisplay = "",
+    AutoRollGrades = false,
+    TargetGrades = {
+        ["神"] = true,
+        ["Z+"] = true,
+        ["Z"] = true,
+        ["S+"] = true,
+        ["S"] = true,
+    },
+    AutoRollTraits = false,
+    TargetTraits = {
+        ["Eternal"] = true,
+        ["Transcendent"] = true,
+        ["Monarch"] = true,
+        ["Shogun"] = true,
+        ["Samurai"] = true,
+    },
 
     -- [6] AUTO TOWER PROGRESSION
     AutoTowerRoll = false,
@@ -132,54 +227,13 @@ local DefaultConfig = {
         InfinityTower = true,
     },
 
-    -- [7] AUTO USE POTIONS
+    -- [7] AUTO USE POTIONS (SMART CORE BOOST SYSTEM)
     AutoUsePotion = false,
-    PotionList = {
-        ["Luck I"] = true,
-        ["Luck II"] = true,
-        ["Luck III"] = true,
-        ["Damage I"] = true,
-        ["Damage II"] = true,
-        ["Damage III"] = true,
-        ["Income I"] = true,
-        ["Income II"] = true,
-        ["Income III"] = true,
-        ["Dragon Luck I"] = true,
-        ["Dragon Luck II"] = true,
-        ["Dragon Luck III"] = true,
-        ["Dragon Damage I"] = true,
-        ["Dragon Damage II"] = true,
-        ["Dragon Damage III"] = true,
-        ["Dragon Income I"] = true,
-        ["Dragon Income II"] = true,
-        ["Dragon Income III"] = true,
-        ["Cursed Luck I"] = true,
-        ["Cursed Luck II"] = true,
-        ["Cursed Luck III"] = true,
-        ["Cursed Damage I"] = true,
-        ["Cursed Damage II"] = true,
-        ["Cursed Damage III"] = true,
-        ["Cursed Income I"] = true,
-        ["Cursed Income II"] = true,
-        ["Cursed Income III"] = true,
-        ["Pirate Luck I"] = true,
-        ["Pirate Luck II"] = true,
-        ["Pirate Luck III"] = true,
-        ["Pirate Damage I"] = true,
-        ["Pirate Damage II"] = true,
-        ["Pirate Damage III"] = true,
-        ["Pirate Income I"] = true,
-        ["Pirate Income II"] = true,
-        ["Pirate Income III"] = true,
-        ["Leaf Luck I"] = true,
-        ["Leaf Luck II"] = true,
-        ["Leaf Luck III"] = true,
-        ["Leaf Damage I"] = true,
-        ["Leaf Damage II"] = true,
-        ["Leaf Damage III"] = true,
-        ["Leaf Income I"] = true,
-        ["Leaf Income II"] = true,
-        ["Leaf Income III"] = true,
+    SelectedPotionTier = "Tier I",
+    SelectedBoosts = {
+        ["Luck"] = true,
+        ["Damage"] = true,
+        ["Income"] = true,
     },
     PotionDelay = 5,
 
@@ -205,7 +259,11 @@ local DefaultConfig = {
     QuestShopItems = {
         ["Lucky Spin"] = true,
     },
-    QuestShopBuyDelay = 30
+    QuestShopBuyDelay = 30,
+    
+    -- [11] TRADE & SPECIAL TRADE
+    TradeTargetPlayer = "",
+    SpecialTrade = false
 }
 
 if not getgenv().Config then
@@ -343,11 +401,11 @@ end
 pcall(function()
     local pGui = player:FindFirstChild("PlayerGui")
     if pGui then
-        pGui.ChildAdded:Connect(function(child)
+        addConnection(pGui.ChildAdded:Connect(function(child)
             if Config.Disable3D and child:IsA("ScreenGui") and not child.Name:find("ZionHub") and not child.Name:find("ArcadeStats") and not child.Name:find("Obsidian") and not child.Name:find("ZetroX") then
                 child.Enabled = false
             end
-        end)
+        end))
     end
 end)
 
@@ -576,10 +634,322 @@ local function getPlayerDataState()
         end)
     end
     if not DataController then return nil end
-    return DataController.___X or DataController.___C
+    if DataController.___X then return DataController.___X end
+    if DataController.___C then return DataController.___C end
+    if type(DataController.GetData) == "function" then
+        local ok, res = pcall(DataController.GetData, DataController)
+        if ok and res then return res end
+    end
+    if type(DataController.Get) == "function" then
+        local ok, res = pcall(DataController.Get, DataController)
+        if ok and res then return res end
+    end
+    if DataController.Replica and DataController.Replica.Data then
+        return DataController.Replica.Data
+    end
+    if DataController.Data then return DataController.Data end
+    return nil
 end
 
--- Tabel Resmi 25 Dadu beserta Harga In-Game (Untuk Pre-Check Tanpa Spam Remote)
+-- =============================================================================
+-- BOOST / POTION CONFIG DYNAMIC SYNC (ANTI-HARDCODE & SMART CORE TYPES)
+-- Path: ReplicatedStorage.Framework.Features.Inventory.Kinds.Boost.BoostConfig
+-- =============================================================================
+local ROMAN_NUMERALS_MAP = {
+    [1] = "I", [2] = "II", [3] = "III", [4] = "IV", [5] = "V", [6] = "VI", [7] = "VII", [8] = "VIII"
+}
+local ROMAN_TO_INT_MAP = {
+    ["I"] = 1, ["II"] = 2, ["III"] = 3, ["IV"] = 4, ["V"] = 5, ["VI"] = 6, ["VII"] = 7, ["VIII"] = 8
+}
+
+local function getCoreBoostType(categoryName)
+    if not categoryName then return nil end
+    local lower = categoryName:lower()
+    if lower:find("luck") then return "Luck" end
+    if lower:find("damage") then return "Damage" end
+    if lower:find("income") or lower:find("money") then return "Income" end
+    if lower:find("speed") then return "Speed" end
+    if lower:find("exp") then return "EXP" end
+    return categoryName
+end
+
+-- Pilihan Kategori Ringkas & Bersih di UI (Core Boost Types)
+local AVAILABLE_BOOST_CATEGORIES = {
+    "Luck",
+    "Damage",
+    "Income",
+}
+
+local AVAILABLE_BOOST_TIERS = {
+    "Tier I",
+    "Tier II",
+    "Tier III",
+    "Tier IV",
+}
+
+-- Registry Potion Game: memetakan setiap nama potion ke Core Type & Tier angkanya
+local ALL_GAME_POTIONS = {
+    ["Luck I"] = { core = "Luck", tier = 1 },
+    ["Luck II"] = { core = "Luck", tier = 2 },
+    ["Luck III"] = { core = "Luck", tier = 3 },
+    ["Luck IV"] = { core = "Luck", tier = 4 },
+    ["Damage I"] = { core = "Damage", tier = 1 },
+    ["Damage II"] = { core = "Damage", tier = 2 },
+    ["Damage III"] = { core = "Damage", tier = 3 },
+    ["Damage IV"] = { core = "Damage", tier = 4 },
+    ["Income I"] = { core = "Income", tier = 1 },
+    ["Income II"] = { core = "Income", tier = 2 },
+    ["Income III"] = { core = "Income", tier = 3 },
+    ["Income IV"] = { core = "Income", tier = 4 },
+    ["Dragon Luck I"] = { core = "Luck", tier = 1 },
+    ["Dragon Luck II"] = { core = "Luck", tier = 2 },
+    ["Dragon Luck III"] = { core = "Luck", tier = 3 },
+    ["Dragon Income I"] = { core = "Income", tier = 1 },
+    ["Dragon Income II"] = { core = "Income", tier = 2 },
+    ["Dragon Income III"] = { core = "Income", tier = 3 },
+    ["Dragon Damage I"] = { core = "Damage", tier = 1 },
+    ["Dragon Damage II"] = { core = "Damage", tier = 2 },
+    ["Dragon Damage III"] = { core = "Damage", tier = 3 },
+    ["Cursed Luck I"] = { core = "Luck", tier = 1 },
+    ["Cursed Luck II"] = { core = "Luck", tier = 2 },
+    ["Cursed Luck III"] = { core = "Luck", tier = 3 },
+    ["Cursed Damage I"] = { core = "Damage", tier = 1 },
+    ["Cursed Damage II"] = { core = "Damage", tier = 2 },
+    ["Cursed Damage III"] = { core = "Damage", tier = 3 },
+    ["Cursed Income I"] = { core = "Income", tier = 1 },
+    ["Cursed Income II"] = { core = "Income", tier = 2 },
+    ["Cursed Income III"] = { core = "Income", tier = 3 },
+    ["Pirate Luck I"] = { core = "Luck", tier = 1 },
+    ["Pirate Luck II"] = { core = "Luck", tier = 2 },
+    ["Pirate Luck III"] = { core = "Luck", tier = 3 },
+    ["Pirate Damage I"] = { core = "Damage", tier = 1 },
+    ["Pirate Damage II"] = { core = "Damage", tier = 2 },
+    ["Pirate Damage III"] = { core = "Damage", tier = 3 },
+    ["Pirate Income I"] = { core = "Income", tier = 1 },
+    ["Pirate Income II"] = { core = "Income", tier = 2 },
+    ["Pirate Income III"] = { core = "Income", tier = 3 },
+    ["Leaf Luck I"] = { core = "Luck", tier = 1 },
+    ["Leaf Luck II"] = { core = "Luck", tier = 2 },
+    ["Leaf Luck III"] = { core = "Luck", tier = 3 },
+    ["Leaf Damage I"] = { core = "Damage", tier = 1 },
+    ["Leaf Damage II"] = { core = "Damage", tier = 2 },
+    ["Leaf Damage III"] = { core = "Damage", tier = 3 },
+    ["Leaf Income I"] = { core = "Income", tier = 1 },
+    ["Leaf Income II"] = { core = "Income", tier = 2 },
+    ["Leaf Income III"] = { core = "Income", tier = 3 },
+    ["Slayer Luck I"] = { core = "Luck", tier = 1 },
+    ["Slayer Luck II"] = { core = "Luck", tier = 2 },
+    ["Slayer Luck III"] = { core = "Luck", tier = 3 },
+    ["Slayer Damage I"] = { core = "Damage", tier = 1 },
+    ["Slayer Damage II"] = { core = "Damage", tier = 2 },
+    ["Slayer Damage III"] = { core = "Damage", tier = 3 },
+    ["Slayer Income I"] = { core = "Income", tier = 1 },
+    ["Slayer Income II"] = { core = "Income", tier = 2 },
+    ["Slayer Income III"] = { core = "Income", tier = 3 },
+}
+
+local function syncBoostConfigFromGame()
+    pcall(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local fw = RS:FindFirstChild("Framework")
+        local feats = fw and fw:FindFirstChild("Features")
+        local inv = feats and feats:FindFirstChild("Inventory")
+        local kinds = inv and inv:FindFirstChild("Kinds")
+        local boostKind = kinds and kinds:FindFirstChild("Boost")
+        local bConfigMod = boostKind and boostKind:FindFirstChild("BoostConfig")
+        if not bConfigMod then return end
+
+        local ok, mod = pcall(require, bConfigMod)
+        if not ok or not mod or not mod.entries or typeof(mod.entries) ~= "table" then return end
+
+        local seenCats = { ["Luck"] = true, ["Damage"] = true, ["Income"] = true }
+        local seenTiers = {}
+        local tierList = {}
+
+        for entryName, entryData in pairs(mod.entries) do
+            if typeof(entryData) == "table" then
+                local rawCat = entryData.category or entryName
+                local core = getCoreBoostType(rawCat)
+                local tNum = tonumber(entryData.tier)
+                if not tNum then
+                    local rom = entryName:match("%s+(VI|VII|VIII|IV|V|III|II|I)$")
+                    if rom then tNum = ROMAN_TO_INT_MAP[rom] end
+                end
+                tNum = tNum or 1
+
+                ALL_GAME_POTIONS[entryName] = { core = core, tier = tNum }
+
+                if core and not seenCats[core] then
+                    seenCats[core] = true
+                    table.insert(AVAILABLE_BOOST_CATEGORIES, core)
+                end
+
+                local r = ROMAN_NUMERALS_MAP[tNum] or tostring(tNum)
+                local tName = "Tier " .. r
+                if not seenTiers[tName] then
+                    seenTiers[tName] = true
+                    table.insert(tierList, { name = tName, num = tNum })
+                end
+            end
+        end
+
+        if #tierList > 0 then
+            table.sort(tierList, function(a, b) return a.num < b.num end)
+            local sortedTiers = {}
+            for _, t in ipairs(tierList) do
+                table.insert(sortedTiers, t.name)
+            end
+            AVAILABLE_BOOST_TIERS = sortedTiers
+        end
+    end)
+end
+pcall(syncBoostConfigFromGame)
+
+-- Helper: Menyelesaikan data Potion (Core Type & Tier angka) baik dari registry maupun deteksi dinamis
+local function resolvePotionData(potName)
+    if not potName or type(potName) ~= "string" then return nil end
+    if ALL_GAME_POTIONS[potName] then return ALL_GAME_POTIONS[potName] end
+
+    local core = getCoreBoostType(potName)
+    local rom = potName:match("%s+(VI|VII|VIII|IV|V|III|II|I)$")
+    local tNum = rom and ROMAN_TO_INT_MAP[rom] or 1
+    local pData = { core = core, tier = tNum }
+    ALL_GAME_POTIONS[potName] = pData
+    return pData
+end
+
+-- Scanner Inventory Akurat (DataController + Controllers + PlayerGui Fallback)
+-- Mengembalikan tabel: [namaPotion] = jumlah (number > 0)
+local function scanOwnedPotions()
+    local owned = {}
+
+    local function recordPotion(name, amt)
+        if not name then return end
+        local potName = tostring(name)
+        local pData = resolvePotionData(potName)
+        if pData then
+            local count = tonumber(amt) or 1
+            if count > 0 then
+                owned[potName] = (owned[potName] or 0) + count
+            end
+        end
+    end
+
+    local function checkItem(k, v)
+        if not v then return end
+
+        local kStr = tostring(k)
+        if ALL_GAME_POTIONS[kStr] then
+            local amt = 0
+            if type(v) == "number" then
+                amt = v
+            elseif type(v) == "table" then
+                amt = tonumber(v.amount or v.count or v.quantity or v.Amount or (v.attributes and (v.attributes.amount or v.attributes.count or v.attributes.quantity)) or 1) or 0
+            end
+            if amt > 0 then
+                recordPotion(kStr, amt)
+                return
+            end
+        end
+
+        if type(v) == "table" then
+            local rawName = v.name or v.entryName or v.ItemName or v.id or (v.attributes and (v.attributes.name or v.attributes.entryName))
+            if rawName and type(rawName) == "string" and (ALL_GAME_POTIONS[rawName] or rawName:lower():find("luck") or rawName:lower():find("damage") or rawName:lower():find("income")) then
+                local amt = tonumber(v.amount or v.count or v.quantity or v.Amount or (v.attributes and (v.attributes.amount or v.attributes.count or v.attributes.quantity)) or 1) or 1
+                if amt > 0 then
+                    recordPotion(rawName, amt)
+                end
+            end
+        end
+    end
+
+    local function scanTable(t, depth)
+        if not t or typeof(t) ~= "table" then return end
+        depth = depth or 0
+        if depth > 3 then return end
+
+        for k, v in pairs(t) do
+            checkItem(k, v)
+            if typeof(v) == "table" and (type(k) == "string" and (k:lower():find("boost") or k:lower():find("item") or k:lower():find("potion") or k:lower():find("inventory") or k == "Data" or k == "Replica")) then
+                scanTable(v, depth + 1)
+            end
+        end
+    end
+
+    -- 1. Scan pState (DataController)
+    local pState = getPlayerDataState()
+    if pState and typeof(pState) == "table" then
+        scanTable(pState.Inventory, 0)
+        scanTable(pState.Boosts, 0)
+        scanTable(pState.Boost, 0)
+        scanTable(pState.Items, 0)
+        scanTable(pState.Bag, 0)
+        if pState.Data and typeof(pState.Data) == "table" then
+            scanTable(pState.Data.Inventory, 0)
+            scanTable(pState.Data.Boosts, 0)
+            scanTable(pState.Data.Items, 0)
+        end
+        for k, v in pairs(pState) do
+            if type(k) == "string" and ALL_GAME_POTIONS[k] then
+                checkItem(k, v)
+            end
+        end
+    end
+
+    -- 2. Scan InventoryController jika ada
+    pcall(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local fw = RS:FindFirstChild("Framework")
+        local feats = fw and fw:FindFirstChild("Features")
+        local invMod = feats and feats:FindFirstChild("Inventory") and (feats.Inventory:FindFirstChild("InventoryController") or feats.Inventory:FindFirstChild("Controller"))
+        if invMod then
+            local ok, invCtrl = pcall(require, invMod)
+            if ok and invCtrl and typeof(invCtrl) == "table" then
+                if type(invCtrl.GetInventory) == "function" then
+                    local ok2, res = pcall(invCtrl.GetInventory, invCtrl)
+                    if ok2 and res then scanTable(res, 0) end
+                end
+                if type(invCtrl.GetItems) == "function" then
+                    local ok2, res = pcall(invCtrl.GetItems, invCtrl)
+                    if ok2 and res then scanTable(res, 0) end
+                end
+            end
+        end
+    end)
+
+    -- 3. Fallback scan PlayerGui HANYA jika owned masih kosong
+    local foundAny = false
+    for _ in pairs(owned) do foundAny = true; break end
+    if not foundAny then
+        pcall(function()
+            local pGui = player:FindFirstChild("PlayerGui")
+            if pGui then
+                for _, desc in ipairs(pGui:GetDescendants()) do
+                    if desc:IsA("TextLabel") or desc:IsA("GuiObject") then
+                        local text = desc:IsA("TextLabel") and desc.Text or desc.Name
+                        if text and text ~= "" and ALL_GAME_POTIONS[text] then
+                            local amt = 1
+                            local parent = desc.Parent
+                            if parent then
+                                for _, sibling in ipairs(parent:GetChildren()) do
+                                    if sibling:IsA("TextLabel") and sibling ~= desc then
+                                        local num = sibling.Text:match("[xX]%s*(%d+)") or sibling.Text:match("^(%d+)$")
+                                        if num then amt = tonumber(num) or 1; break end
+                                    end
+                                end
+                            end
+                            recordPotion(text, amt)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    return owned
+end
+
+-- Tabel Resmi Dadu beserta Harga In-Game (Untuk Pre-Check Tanpa Spam Remote)
 local DICE_ORDERED = {
     { name = "Normal",      tier = 1,  price = 1 },
     { name = "Fire",        tier = 2,  price = 2500 },
@@ -606,9 +976,11 @@ local DICE_ORDERED = {
     { name = "Chrono",      tier = 23, price = 1.5e+22 },
     { name = "Cyber",       tier = 24, price = 1e+23 },
     { name = "Toxic",       tier = 25, price = 7.5e+23 },
+    { name = "Ethereal",    tier = 26, price = 1e+25 },
+    { name = "Frostfire",   tier = 27, price = 2.5e+26 },
 }
 
--- 25 Tiers Daftar Resmi Dadu Anime Dice (Common -> Secret II)
+-- Daftar Resmi Dadu Anime Dice (Common -> Secret II)
 local FALLBACK_25_DICES = {
     "Normal",      -- Tier 1  (Common)
     "Fire",        -- Tier 2  (Uncommon)
@@ -634,7 +1006,9 @@ local FALLBACK_25_DICES = {
     "Titan",       -- Tier 22 (Secret I)
     "Chrono",      -- Tier 23 (Secret I)
     "Cyber",       -- Tier 24 (Secret I)
-    "Toxic"        -- Tier 25 (Secret II)
+    "Toxic",       -- Tier 25 (Secret I)
+    "Ethereal",    -- Tier 26 (Secret II)
+    "Frostfire"    -- Tier 27 (Secret II)
 }
 
 -- Helper resmi untuk mendapatkan Tier (1-25) & Nama Resmi Dadu (ROBUST & STRICT)
@@ -763,9 +1137,72 @@ local DICE_NAME_TO_TIER = {
     ["toxic"] = { tier = 25, name = "Toxic" },
     ["racun"] = { tier = 25, name = "Toxic" },
     ["beracun"] = { tier = 25, name = "Toxic" },
+
+    -- Tier 26: Ethereal
+    ["ethereal"] = { tier = 26, name = "Ethereal" },
+    ["etereal"] = { tier = 26, name = "Ethereal" },
+    ["etherial"] = { tier = 26, name = "Ethereal" },
+
+    -- Tier 27: Frostfire
+    ["frostfire"] = { tier = 27, name = "Frostfire" },
+    ["frost fire"] = { tier = 27, name = "Frostfire" },
+    ["api es"] = { tier = 27, name = "Frostfire" },
+    ["es api"] = { tier = 27, name = "Frostfire" },
 }
 
--- Helper resmi untuk mendapatkan Tier (1-25) & Nama Resmi Dadu (Bilingual ID/EN Support)
+-- =============================================================================
+-- DYNAMIC DICE SYNC DARI MODULE RESMI GAME (ANTI-HARDCODE)
+-- Path: game:GetService("ReplicatedStorage").Framework.Features.Rolling.Dice
+-- =============================================================================
+local function syncDiceFromGameModule()
+    pcall(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local fw = RS:FindFirstChild("Framework")
+        local feats = fw and fw:FindFirstChild("Features")
+        local rolling = feats and feats:FindFirstChild("Rolling")
+        local diceScript = rolling and rolling:FindFirstChild("Dice")
+        if not diceScript then return end
+
+        local ok, diceMod = pcall(require, diceScript)
+        if not ok or not diceMod or not diceMod.GetAll then return end
+
+        local allDice = diceMod.GetAll()
+        if not allDice or typeof(allDice) ~= "table" then return end
+
+        local extracted = {}
+        for dName, dData in pairs(allDice) do
+            if typeof(dData) == "table" and dName ~= "Basic" then
+                local price = tonumber(dData.price) or (dName == "Normal" and 1 or 0)
+                table.insert(extracted, {
+                    name = dName,
+                    price = price,
+                    luck = tonumber(dData.luck) or 1
+                })
+            end
+        end
+
+        table.sort(extracted, function(a, b)
+            return a.price < b.price
+        end)
+
+        for idx, item in ipairs(extracted) do
+            item.tier = idx
+            DICE_ORDERED[idx] = item
+            FALLBACK_25_DICES[idx] = item.name
+
+            local lower = item.name:lower()
+            if not DICE_NAME_TO_TIER[lower] then
+                DICE_NAME_TO_TIER[lower] = { tier = idx, name = item.name }
+            else
+                DICE_NAME_TO_TIER[lower].tier = idx
+                DICE_NAME_TO_TIER[lower].name = item.name
+            end
+        end
+    end)
+end
+pcall(syncDiceFromGameModule)
+
+-- Helper resmi untuk mendapatkan Tier & Nama Resmi Dadu (Bilingual ID/EN Support)
 local function getTierForDice(name)
     if not name or typeof(name) ~= "string" then return nil, nil end
     local raw = name:lower()
@@ -873,8 +1310,8 @@ local function calculateThresholdForTier(tier)
         return 0 -- Tier 1 (Normal): Gada sell threshold sampai upgrade ke Tier 2!
     elseif tier < stepInterval then
         return parseFormattedNumber(Config.DefaultSellThreshold) or parseFormattedNumber(Config.SellThresholdBase) or 1000
-    elseif tier >= 25 then
-        return 10000000000000 -- 10T (Max Tier)
+    elseif tier >= #FALLBACK_25_DICES then
+        return 100000000000000 -- 100T (Max Tier)
     end
     local stepCount = math.floor((tier - stepInterval) / stepInterval)
     local startVal = parseFormattedNumber(Config.SellThresholdStartValue) or 100000
@@ -958,6 +1395,8 @@ local Remotes = {
     -- Traits & Grade
     RollTrait           = Network and Network:FindFirstChild("TraitService") and Network.TraitService.RE:FindFirstChild("Roll"),
     RollGrade           = Network and Network:FindFirstChild("GradeService") and Network.GradeService.RE:FindFirstChild("Roll"),
+    SetGradeProtected   = Network and Network:FindFirstChild("GradeService") and Network.GradeService.RE:FindFirstChild("SetGradeProtected"),
+    SetTraitProtected   = Network and Network:FindFirstChild("TraitService") and Network.TraitService.RE:FindFirstChild("SetTraitProtected"),
 
     -- Sell
     UpdateAutoSell      = Network and Network:FindFirstChild("SellService") and Network.SellService.RE:FindFirstChild("UpdateAutoSell"),
@@ -974,6 +1413,10 @@ local Remotes = {
     BuyQuestItem        = Network and Network:FindFirstChild("QuestService") and Network.QuestService.RE:FindFirstChild("Buy"),
     UseSpin             = Network and Network:FindFirstChild("SpinService") and Network.SpinService.RE:FindFirstChild("Use"),
     RedeemCode          = Network and Network:FindFirstChild("MonetizationService") and Network.MonetizationService.RE:FindFirstChild("RedeemCode"),
+
+    -- Trade
+    RequestTrade        = Network and Network:FindFirstChild("TradeService") and Network.TradeService.RE:FindFirstChild("RequestTrade"),
+    ChangeOffer         = Network and Network:FindFirstChild("TradeService") and Network.TradeService.RE:FindFirstChild("ChangeOffer"),
 }
 
 -- UI references for dynamic updates
@@ -1040,13 +1483,13 @@ local slotLevelsCache = {}
 -- Listener remote event LevelUpSuccess dari game
 if Remotes and Remotes.LevelUpSuccess then
     pcall(function()
-        Remotes.LevelUpSuccess.OnClientEvent:Connect(function(slot, lvl, ...)
+        addConnection(Remotes.LevelUpSuccess.OnClientEvent:Connect(function(slot, lvl, ...)
             local sNum = tonumber(slot)
             local lNum = tonumber(lvl)
             if sNum and lNum then
                 slotLevelsCache[sNum] = lNum
             end
-        end)
+        end))
     end)
 end
 
@@ -1419,7 +1862,7 @@ local function ensureDiceShopCardsLoaded()
     end
 end
 
-local cachedShopDices = {}
+cachedShopDices = {}
 
 local function scanAllShopDices()
     local pGui = player:FindFirstChild("PlayerGui")
@@ -1758,57 +2201,16 @@ end
 -- =============================================================================
 -- SMART PROGRESSIVE DICE BUYER & AUTO EQUIP BEST ENGINE (BUILD #2.7.3)
 -- =============================================================================
--- Helper: Tutup paksa popup Robux Shop ('Putaran Jackpot' / 'Pass Permainan') jika terbuka
+-- Helper: Tutup paksa popup Robux Shop jika terbuka (Ringan & Cepat)
 local function autoCloseRobuxShop()
-    local pGui = player:FindFirstChild("PlayerGui")
-    if not pGui then return end
-    pcall(function()
-        for _, desc in ipairs(pGui:GetDescendants()) do
-            if desc:IsA("TextLabel") and typeof(desc.Text) == "string" then
-                local t = desc.Text:lower()
-                if t:find("putaran jackpot") or t:find("pass permainan") then
-                    local frame = desc
-                    for i = 1, 6 do
-                        if frame.Parent and frame.Parent:IsA("GuiObject") and not frame.Parent:IsA("ScreenGui") then
-                            frame = frame.Parent
-                        else
-                            break
-                        end
-                    end
-                    if frame and frame:IsA("GuiObject") then
-                        frame.Visible = false
-                        local closeBtn = frame:FindFirstChild("Close", true) or frame:FindFirstChild("Exit", true) or frame:FindFirstChild("X", true)
-                        if closeBtn and (closeBtn:IsA("GuiButton") or closeBtn:IsA("TextButton") or closeBtn:IsA("ImageButton")) then
-                            if firesignal then
-                                firesignal(closeBtn.MouseButton1Click)
-                                firesignal(closeBtn.Activated)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
+    -- Tidak diperlukan karena pembelian murni via RemoteEvent tanpa membuka GUI Toko
 end
 
 local function activateButton(btn)
     if not btn then return false end
     pcall(function()
         if firesignal then
-            firesignal(btn.MouseButton1Click)
-            firesignal(btn.MouseButton1Down)
-            firesignal(btn.MouseButton1Up)
             firesignal(btn.Activated)
-        end
-    end)
-    pcall(function()
-        if getconnections then
-            for _, conn in ipairs(getconnections(btn.MouseButton1Click)) do
-                conn:Fire()
-            end
-            for _, conn in ipairs(getconnections(btn.Activated)) do
-                conn:Fire()
-            end
         end
     end)
     return true
@@ -1836,97 +2238,45 @@ local function isButtonTextOwned(text)
         or t:find("dimiliki") or t:find("milik")
 end
 
--- Scanner Kartu Dadu Nyata di Layar / PlayerGui (Strict Dadu Filter, Immutable FALLBACK_25_DICES)
+-- Scanner Kartu Dadu Ringan (Direct Children dari ScrollingFrame Toko, Zero Lag Spike)
 local function scanRealDiceShopCards()
     local pGui = player:FindFirstChild("PlayerGui")
     if not pGui then return {} end
+    local root = pGui:FindFirstChild("Root")
+    local menus = root and root:FindFirstChild("Menus")
+    local diceShop = menus and menus:FindFirstChild("DiceShop")
+    local scroller = diceShop and diceShop:FindFirstChild("ScrollingFrame", true)
+    if not scroller then return {} end
 
     local cards = {}
-    local seen = {}
-
-    for _, lbl in ipairs(pGui:GetDescendants()) do
-        if lbl.Name:find("Zion") or (lbl.Parent and lbl.Parent.Name:find("Zion")) then continue end
-        if lbl:IsA("TextLabel") and typeof(lbl.Text) == "string" and lbl.Text:find("|") then
-            local text = lbl.Text
-            local textLower = text:lower()
-            if not textLower:find("luck") and not textLower:find("keberuntungan") and not textLower:find("pass") and not textLower:find("putaran") then
-                local parts = text:split("|")
-                if #parts == 2 then
-                    local dName = parts[1]:gsub("^%s+", ""):gsub("%s+$", "")
-                    local dRarity = parts[2]:gsub("^%s+", ""):gsub("%s+$", "")
-
-                    -- Filter ketat: HANYA dadu resmi yang ada di daftar 1-25!
-                    local dTier, canonName = getTierForDice(dName)
-                    if not dTier then
-                        dTier, canonName = getTierForDice(lbl.Text)
-                    end
-                    if not dTier then continue end
-
-                    local cardRoot = lbl.Parent
-                    for depth = 1, 4 do
-                        if cardRoot and (cardRoot:FindFirstChildWhichIsA("TextButton", true) or cardRoot:FindFirstChildWhichIsA("ImageButton", true)) then
-                            break
-                        end
-                        if cardRoot and cardRoot.Parent and cardRoot.Parent:IsA("GuiObject") and not cardRoot.Parent:IsA("ScrollingFrame") and not cardRoot.Parent:IsA("ScreenGui") then
-                            cardRoot = cardRoot.Parent
-                        else
-                            break
-                        end
-                    end
-
-                    if cardRoot and not seen[cardRoot] then
-                        seen[cardRoot] = true
-
-                        local btn = cardRoot:FindFirstChildWhichIsA("TextButton", true) or cardRoot:FindFirstChildWhichIsA("ImageButton", true)
-                        local btnText = ""
-                        if btn and btn:IsA("TextButton") then
-                            btnText = tostring(btn.Text)
-                        elseif btn then
-                            local t = btn:FindFirstChildWhichIsA("TextLabel", true)
-                            if t then btnText = tostring(t.Text) end
-                        end
-
-                        local isEquipped = isButtonTextEquipped(btnText)
-                        local isOwned = isButtonTextOwned(btnText)
-
-                        -- Periksa juga label status lain di dalam kartu
-                        if not isEquipped then
-                            for _, subLbl in ipairs(cardRoot:GetDescendants()) do
-                                if subLbl:IsA("TextLabel") and subLbl ~= lbl then
-                                    if isButtonTextEquipped(subLbl.Text) then
-                                        isEquipped = true
-                                        isOwned = true
-                                        break
-                                    elseif not isOwned and isButtonTextOwned(subLbl.Text) then
-                                        isOwned = true
-                                    end
-                                end
-                            end
-                        end
-
-                        table.insert(cards, {
-                            Name = canonName or dName,
-                            Tier = dTier,
-                            Rarity = dRarity,
-                            Button = btn,
-                            ButtonText = btnText,
-                            Card = cardRoot,
-                            IsOwned = isOwned,
-                            IsEquipped = isEquipped,
-                            YPos = cardRoot.AbsolutePosition.Y,
-                            LayoutOrder = cardRoot.LayoutOrder
-                        })
-                    end
+    for _, item in ipairs(scroller:GetChildren()) do
+        if item:IsA("GuiObject") and item.Name ~= "Template" then
+            local titleObj = item:FindFirstChild("Title", true) or item:FindFirstChild("Dice", true)
+            local btnBuy = item:FindFirstChild("Buy", true)
+            local btnEquip = item:FindFirstChild("Equip", true) or item:FindFirstChild("Equipped", true)
+            
+            local dText = titleObj and titleObj:IsA("TextLabel") and titleObj.Text or item.Name
+            local dTier, canonName = getTierForDice(dText)
+            if dTier and canonName then
+                local isEquipped = false
+                local isOwned = false
+                if btnEquip then
+                    isOwned = true
+                    local bText = btnEquip:IsA("TextButton") and btnEquip.Text or ""
+                    if isButtonTextEquipped(bText) then isEquipped = true end
+                elseif not btnBuy then
+                    isOwned = true
                 end
+                table.insert(cards, {
+                    Name = canonName,
+                    Tier = dTier,
+                    IsOwned = isOwned,
+                    IsEquipped = isEquipped
+                })
             end
         end
     end
-
-    -- Urutkan kartu secara presisi berdasarkan Tier resmi (1 -> 25)
-    table.sort(cards, function(a, b)
-        return a.Tier < b.Tier
-    end)
-
+    table.sort(cards, function(a, b) return a.Tier < b.Tier end)
     return cards
 end
 
@@ -1934,8 +2284,10 @@ end
 local onDiceConfirmed
 
 -- =============================================================================
--- SEQUENTIAL PROGRESSIVE DICE BUYER & AUTO-EQUIP BEST (ARCADEHUB PROVEN)
+-- FAST PROGRESSIVE DICE BUYER & AUTO-EQUIP BEST (100% REMOTE & MEMORY-BASED)
 -- =============================================================================
+local ownedDicesSessionCache = { ["normal"] = true }
+
 local function getPlayerMoney()
     local pState = getPlayerDataState()
     if pState then
@@ -1960,6 +2312,13 @@ end
 
 local function getOwnedDiceMap()
     local owned = { ["normal"] = true }
+
+    -- 1. Gabungkan dengan session cache lokal
+    for k, v in pairs(ownedDicesSessionCache) do
+        if v then owned[k:lower()] = true end
+    end
+
+    -- 2. Baca langsung dari DataController state game (0ms)
     local pState = getPlayerDataState()
     if pState then
         local rawOwned = pState.OwnedDice or pState.OwnedDices or pState.Dices or pState.Dice
@@ -1968,67 +2327,108 @@ local function getOwnedDiceMap()
                 local kStr = tostring(k):lower()
                 local vStr = tostring(v):lower()
 
-                -- 1. Periksa apakah key adalah nama dadu resmi (cth: ["Water"] = "true" atau ["Water"] = true)
                 local tK, nK = getTierForDice(tostring(k))
                 if tK then
                     if v == true or vStr == "true" or v == 1 or vStr == "1" or typeof(v) == "table" then
                         owned[nK:lower()] = true
+                        ownedDicesSessionCache[nK:lower()] = true
                     end
                 end
 
-                -- 2. Periksa jika format tabel adalah array string: {[1] = "Water", [2] = "Fire"}
                 local tV, nV = getTierForDice(tostring(v))
                 if tV then
                     owned[nV:lower()] = true
+                    ownedDicesSessionCache[nV:lower()] = true
                 end
             end
         end
         local curDice = pState.Dice or pState.EquippedDice
         if curDice and typeof(curDice) == "string" and curDice ~= "" then
             local tC, nC = getTierForDice(curDice)
-            if nC then owned[nC:lower()] = true else owned[curDice:lower()] = true end
+            if nC then
+                owned[nC:lower()] = true
+                ownedDicesSessionCache[nC:lower()] = true
+            else
+                owned[curDice:lower()] = true
+                ownedDicesSessionCache[curDice:lower()] = true
+            end
         end
     end
 
-    local cards = scanRealDiceShopCards()
-    for _, c in ipairs(cards) do
-        if (c.IsOwned or c.IsEquipped) and c.Name then
-            local tC, nC = getTierForDice(c.Name)
-            if nC then owned[nC:lower()] = true else owned[c.Name:lower()] = true end
-        end
-    end
-
-    if detectedEquippedName and detectedEquippedName ~= "" then
-        local tD, nD = getTierForDice(detectedEquippedName)
-        if nD then owned[nD:lower()] = true else owned[detectedEquippedName:lower()] = true end
-    end
-
+    -- 3. Logika Progresif: Semua tier di bawah confirmedHighestOwnedTier pasti sudah dimiliki
     if confirmedHighestOwnedTier and confirmedHighestOwnedTier > 1 then
         for i = 1, confirmedHighestOwnedTier do
             local fn = FALLBACK_25_DICES[i]
-            if fn then owned[fn:lower()] = true end
+            if fn then
+                owned[fn:lower()] = true
+                ownedDicesSessionCache[fn:lower()] = true
+            end
+        end
+    end
+
+    -- 4. Dadu yang sedang terpasang pasti dimiliki
+    if detectedEquippedName and detectedEquippedName ~= "" then
+        local tD, nD = getTierForDice(detectedEquippedName)
+        if nD then
+            owned[nD:lower()] = true
+            ownedDicesSessionCache[nD:lower()] = true
+        else
+            owned[detectedEquippedName:lower()] = true
+            ownedDicesSessionCache[detectedEquippedName:lower()] = true
         end
     end
 
     return owned
 end
 
--- Fungsi Khusus: Memasang Dadu Tertinggi yang Sudah Dimiliki Akun (100% Akurat)
+local function updateThresholdForDice(diceName, diceTier, forcedThreshold)
+    if not Config.AutoSyncThresholdWithDice then return end
+
+    local matchedThreshold = forcedThreshold or calculateThresholdForTier(diceTier)
+    Config.SellThreshold = matchedThreshold
+
+    if diceTier <= 1 or matchedThreshold <= 0 then
+        -- Tier 1: Matikan auto-sell agar unit awal akun baru tidak terjual
+        if Remotes.UpdateAutoSell then
+            pcall(function() Remotes.UpdateAutoSell:FireServer(0) end)
+        end
+        if uiRefs.thresholdLabel then
+            uiRefs.thresholdLabel.Text = string.format("Threshold: Disabled (Tier 1: %s | Menunggu Tier 2)", diceName or "Normal")
+        end
+        if uiRefs.thresholdInput then
+            uiRefs.thresholdInput.Text = "0 (Tier 1 No Sell)"
+        end
+        return
+    end
+
+    if Remotes.UpdateAutoSell then
+        pcall(function() Remotes.UpdateAutoSell:FireServer(matchedThreshold) end)
+    end
+
+    if uiRefs.thresholdLabel then
+        uiRefs.thresholdLabel.Text = string.format("Threshold: %s (Tier %d: %s | Step: %dT)",
+            tostring(matchedThreshold), diceTier or 1, diceName or "Unknown", Config.SellThresholdTierStep or 4)
+    end
+    if uiRefs.thresholdInput then
+        uiRefs.thresholdInput.Text = tostring(matchedThreshold)
+    end
+end
+
+-- Fungsi Khusus: Memasang Dadu Tertinggi yang Sudah Dimiliki Akun (100% Remote, Zero UI Click)
 local function autoEquipBestDice()
     local equipRem = getEquipDiceRemote()
     local owned = getOwnedDiceMap()
-    local cards = scanRealDiceShopCards()
 
     local highestOwnedTier = 1
     local highestOwnedName = "Normal"
 
-    for _, d in ipairs(DICE_ORDERED) do
-        local dLower = d.name:lower()
-        if owned[dLower] then
-            if d.tier > highestOwnedTier then
-                highestOwnedTier = d.tier
-                highestOwnedName = d.name
-            end
+    -- Looping dari tier tertinggi (#DICE_ORDERED mundur ke 1) untuk cari dadu terbaik
+    for i = #DICE_ORDERED, 1, -1 do
+        local d = DICE_ORDERED[i]
+        if owned[d.name:lower()] then
+            highestOwnedTier = d.tier
+            highestOwnedName = d.name
+            break
         end
     end
 
@@ -2040,15 +2440,6 @@ local function autoEquipBestDice()
     if actualEquipped:lower() ~= highestOwnedName:lower() then
         if equipRem then
             pcall(function() equipRem:FireServer(highestOwnedName) end)
-            pcall(function() equipRem:FireServer(highestOwnedName .. " Dice") end)
-            if highestOwnedTier == 4 then pcall(function() equipRem:FireServer("Earth") end) end
-        end
-
-        for _, card in ipairs(cards) do
-            if card.Tier == highestOwnedTier and card.Button and not card.IsEquipped then
-                activateButton(card.Button)
-                break
-            end
         end
 
         detectedEquippedTier = highestOwnedTier
@@ -2064,74 +2455,47 @@ local function autoEquipBestDice()
     return highestOwnedName, highestOwnedTier
 end
 
--- Fungsi Pembeli Dadu Progresif (Membeli Tier Berikutnya Secara Urut & Langsung Memasang)
+-- Fungsi Pembeli Dadu Progresif (Murni RemoteEvent, Anti-Teleport, Anti-Freeze)
+local isBuyingInProgress = false
 local function smartProgressiveBuyDice()
-    autoCloseRobuxShop()
-
-    -- Pasang dulu dadu terbaik yang ada di tas
-    autoEquipBestDice()
+    if isBuyingInProgress then return end
+    isBuyingInProgress = true
 
     local buyRem = getBuyDiceRemote()
-    local equipRem = getEquipDiceRemote()
+    if not buyRem then
+        isBuyingInProgress = false
+        return
+    end
+
     local curMoney = getPlayerMoney()
     local owned = getOwnedDiceMap()
-    local cards = scanRealDiceShopCards()
 
-    -- Cari tier-tier yang belum dimiliki jika saldo cukup
-    local toBuy = {}
+    local boughtAny = false
     for _, d in ipairs(DICE_ORDERED) do
         local dLower = d.name:lower()
         if not owned[dLower] then
             if curMoney >= d.price then
-                table.insert(toBuy, d)
-                curMoney = curMoney - d.price
+                -- Tembak remote beli langsung ke server
+                pcall(function() buyRem:FireServer(d.name) end)
                 owned[dLower] = true
+                ownedDicesSessionCache[dLower] = true
+                confirmedHighestOwnedTier = math.max(confirmedHighestOwnedTier or 1, d.tier)
+                curMoney = curMoney - d.price
+                boughtAny = true
+                task.wait(0.25)
             else
-                -- Saldo tidak cukup untuk tier ini, stop pass (Zero Remote Spam)
+                -- Saldo tidak cukup untuk tier berikutnya, langsung stop (Zero Remote Spam)
                 break
             end
         end
     end
 
-    if #toBuy == 0 then return end
-
-    -- Server Roblox Anime Dice mewajibkan karakter berada di dalam zona Workspace.Zones.DiceShop untuk membeli dadu
-    local p = game:GetService("Players").LocalPlayer
-    local char = p.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local zone = workspace:FindFirstChild("Zones") and workspace.Zones:FindFirstChild("DiceShop")
-
-    local oldCFrame = nil
-    if hrp and zone and (hrp.Position - zone.Position).Magnitude > 25 then
-        oldCFrame = hrp.CFrame
-        hrp.CFrame = zone.CFrame + Vector3.new(0, 3, 0)
-        task.wait(0.25)
+    -- Jika ada dadu baru yang berhasil dibeli, pasang dadu terbaik
+    if boughtAny then
+        autoEquipBestDice()
     end
 
-    for _, d in ipairs(toBuy) do
-        if buyRem then
-            pcall(function() buyRem:FireServer(d.name) end)
-            pcall(function() buyRem:FireServer(d.name .. " Dice") end)
-            if d.tier == 4 then pcall(function() buyRem:FireServer("Earth") end) end
-        end
-
-        for _, card in ipairs(cards) do
-            if card.Tier == d.tier and card.Button and not card.IsOwned then
-                activateButton(card.Button)
-                break
-            end
-        end
-
-        task.wait(0.2)
-    end
-
-    -- Kembalikan posisi karakter ke titik semula
-    if oldCFrame and hrp and hrp.Parent then
-        hrp.CFrame = oldCFrame
-    end
-
-    -- Langsung pasang dadu tertinggi yang baru dibeli
-    autoEquipBestDice()
+    isBuyingInProgress = false
 end
 
 local function tryBuyAndEquipDice(dName, dTier)
@@ -2347,48 +2711,13 @@ pcall(function()
     local net = rep:FindFirstChild("Network")
     local dataRE = net and net:FindFirstChild("RE") and net.RE:FindFirstChild("Data")
     if dataRE then
-        dataRE.OnClientEvent:Connect(function(...)
+        addConnection(dataRE.OnClientEvent:Connect(function(...)
             for _, arg in ipairs({...}) do
                 pcall(function() parseGameDataRecursive(arg, 1) end)
             end
-        end)
+        end))
     end
 end)
-
-local function updateThresholdForDice(diceName, diceTier, forcedThreshold)
-    if not Config.AutoSyncThresholdWithDice then return end
-
-    local matchedThreshold = forcedThreshold or calculateThresholdForTier(diceTier)
-    Config.SellThreshold = matchedThreshold
-
-    if diceTier <= 1 or matchedThreshold <= 0 then
-        -- Tier 1: Matikan auto-sell agar unit awal akun baru tidak terjual
-        if Remotes.UpdateAutoSell then
-            pcall(function() Remotes.UpdateAutoSell:FireServer(0) end)
-        end
-        -- print(string.format("[ZionHub] 🎲 Dadu Tier 1 (%s): Sell Threshold NONAKTIF (0) sampai upgrade ke Tier 2!", diceName or "Normal"))
-        if uiRefs.thresholdLabel then
-            uiRefs.thresholdLabel.Text = string.format("Threshold: Disabled (Tier 1: %s | Menunggu Tier 2)", diceName or "Normal")
-        end
-        if uiRefs.thresholdInput then
-            uiRefs.thresholdInput.Text = "0 (Tier 1 No Sell)"
-        end
-        return
-    end
-
-    if Remotes.UpdateAutoSell then
-        pcall(function() Remotes.UpdateAutoSell:FireServer(matchedThreshold) end)
-    end
-
-    -- print(string.format("[ZionHub] 🎲 Dadu tersinkron ke [%s] (Tier %d)! Auto-Sell Threshold diset ke %s", diceName or "Unknown", diceTier or 1, tostring(matchedThreshold)))
-    if uiRefs.thresholdLabel then
-        uiRefs.thresholdLabel.Text = string.format("Threshold: %s (Tier %d: %s | Step: %dT)",
-            tostring(matchedThreshold), diceTier or 1, diceName or "Unknown", Config.SellThresholdTierStep or 4)
-    end
-    if uiRefs.thresholdInput then
-        uiRefs.thresholdInput.Text = tostring(matchedThreshold)
-    end
-end
 
 -- Callback terpusat saat dadu baru terkonfirmasi oleh game
 onDiceConfirmed = function(dName, dTier)
@@ -2791,15 +3120,340 @@ local function formatMoney(val)
         exp = math.clamp(exp, 0, #MONEY_SUFFIXES - 1)
         local div = 10 ^ (exp * 3)
         local n = val / div
-        if n >= 100 then
-            return string.format("$%.0f%s", n, MONEY_SUFFIXES[exp + 1])
-        elseif n >= 10 then
-            return string.format("$%.1f%s", n, MONEY_SUFFIXES[exp + 1])
+        if n >= 10 then
+            -- Match persis format in-game Anime Dice: >= 10 tidak menggunakan desimal ($15b, $28t, $126b)
+            return string.format("$%.0f%s", math.floor(n), MONEY_SUFFIXES[exp + 1])
         else
-            return string.format("$%.2f%s", n, MONEY_SUFFIXES[exp + 1])
+            -- < 10 tampilkan 1 desimal jika ada ($3.1t), jika bilangan bulat .0 dihilangkan ($3t)
+            local s = string.format("$%.1f%s", n, MONEY_SUFFIXES[exp + 1])
+            return s:gsub("%.0", "")
         end
     end
     return "$" .. tostring(val)
+end
+
+-- =============================================================================
+-- GRADES & TRAITS CONFIGURATION & MAPPING
+-- =============================================================================
+local ALL_GRADES_CONFIG = {
+    ["D"]   = { order = 1,  incomeMultiplier = 1.1 },
+    ["C"]   = { order = 2,  incomeMultiplier = 1.25 },
+    ["B"]   = { order = 3,  incomeMultiplier = 1.75 },
+    ["A"]   = { order = 4,  incomeMultiplier = 3.0 },
+    ["A+"]  = { order = 5,  incomeMultiplier = 4.5 },
+    ["S"]   = { order = 6,  incomeMultiplier = 7.0,  protected = true },
+    ["S+"]  = { order = 7,  incomeMultiplier = 10.0, protected = true },
+    ["Z"]   = { order = 8,  incomeMultiplier = 15.0, protected = true },
+    ["Z+"]  = { order = 9,  incomeMultiplier = 25.0, protected = true },
+    ["神"]   = { order = 10, incomeMultiplier = 50.0, protected = true },
+}
+local GRADE_TIERS_LIST = { "神", "Z+", "Z", "S+", "S", "A+", "A", "B", "C", "D" }
+
+local ALL_TRAITS_CONFIG = {
+    ["Money I"]       = { order = 1,  incomeMultiplier = 1.2 },
+    ["Money II"]      = { order = 2,  incomeMultiplier = 1.5 },
+    ["Money III"]     = { order = 3,  incomeMultiplier = 2.0, protected = true },
+    ["Damage I"]      = { order = 4,  damageMultiplier = 1.2 },
+    ["Damage II"]     = { order = 5,  damageMultiplier = 1.5 },
+    ["Damage III"]    = { order = 6,  damageMultiplier = 2.0, protected = true },
+    ["Health I"]      = { order = 7,  healthMultiplier = 1.2 },
+    ["Health II"]     = { order = 8,  healthMultiplier = 1.5 },
+    ["Health III"]    = { order = 9,  healthMultiplier = 2.0, protected = true },
+    ["Samurai"]       = { order = 10, incomeMultiplier = 3.0, protected = true },
+    ["Shogun"]        = { order = 11, incomeMultiplier = 5.0, protected = true },
+    ["Monarch"]       = { order = 12, incomeMultiplier = 8.0, protected = true },
+    ["Transcendent"]  = { order = 13, incomeMultiplier = 15.0, protected = true },
+    ["Eternal"]       = { order = 14, incomeMultiplier = 27.5, protected = true },
+}
+local TRAIT_LIST = {
+    "Eternal", "Transcendent", "Monarch", "Shogun", "Samurai",
+    "Damage III", "Money III", "Health III",
+    "Damage II", "Money II", "Health II",
+    "Damage I", "Money I", "Health I"
+}
+
+-- Coba require modul asli game jika tersedia
+pcall(function()
+    local gMod = ReplicatedStorage:FindFirstChild("Framework")
+        and ReplicatedStorage.Framework:FindFirstChild("Features")
+        and ReplicatedStorage.Framework.Features:FindFirstChild("Grades")
+        and ReplicatedStorage.Framework.Features.Grades:FindFirstChild("Grades")
+    if gMod then
+        local res = require(gMod)
+        if typeof(res) == "table" then
+            for k, v in pairs(res) do
+                if typeof(v) == "table" then ALL_GRADES_CONFIG[k] = v end
+            end
+        end
+    end
+end)
+
+pcall(function()
+    local tMod = ReplicatedStorage:FindFirstChild("Framework")
+        and ReplicatedStorage.Framework:FindFirstChild("Features")
+        and ReplicatedStorage.Framework.Features:FindFirstChild("Traits")
+        and ReplicatedStorage.Framework.Features.Traits:FindFirstChild("Traits")
+    if tMod then
+        local res = require(tMod)
+        if typeof(res) == "table" then
+            for k, v in pairs(res) do
+                if typeof(v) == "table" then ALL_TRAITS_CONFIG[k] = v end
+            end
+        end
+    end
+end)
+
+-- Helper: Hitung estimasi penghasilan per detik (Income/s) resmi untuk 1 unit
+local function getUnitRawIncome(uData)
+    if not uData then return 0 end
+    local baseIncome = 0
+
+    if not UnitConfig then
+        pcall(function()
+            local RS = game:GetService("ReplicatedStorage")
+            local fw = RS:FindFirstChild("Framework")
+            local feats = fw and fw:FindFirstChild("Features")
+            local inv = feats and feats:FindFirstChild("Inventory")
+            local kinds = inv and inv:FindFirstChild("Kinds")
+            local uKind = kinds and kinds:FindFirstChild("Unit")
+            local uCfg = uKind and uKind:FindFirstChild("UnitConfig")
+            if uCfg then UnitConfig = require(uCfg) end
+        end)
+    end
+
+    local uName = uData.name or uData.Name
+    local attrs = uData.attributes or uData.Attributes or {}
+
+    -- Panggil fungsi resmi entry.income(attributes) bawaan game
+    -- Game SUDAH otomatis menghitung level, mutasi, grade, dan trait secara lengkap di dalamnya.
+    pcall(function()
+        if UnitConfig and UnitConfig.entries and uName then
+            local entry = UnitConfig.entries[uName]
+            if entry then
+                if type(entry.income) == "function" then
+                    local ok, val = pcall(entry.income, attrs)
+                    if ok and tonumber(val) then baseIncome = tonumber(val) end
+                elseif tonumber(entry.income) then
+                    baseIncome = tonumber(entry.income)
+                elseif tonumber(entry.baseIncome) then
+                    baseIncome = tonumber(entry.baseIncome)
+                elseif tonumber(entry.moneyPerSecond) then
+                    baseIncome = tonumber(entry.moneyPerSecond)
+                end
+            end
+        end
+    end)
+
+    if baseIncome <= 0 and attrs then
+        baseIncome = tonumber(attrs.income or attrs.baseIncome or attrs.mps) or 0
+    end
+    if baseIncome <= 0 and uData.income then
+        baseIncome = tonumber(uData.income) or 0
+    end
+
+    -- entry.income(attributes) resmi sudah mencakup seluruh multiplier (Level, Mutasi, Grade, Trait).
+    -- Jangan kalikan gradeMult/traitMult lagi agar tidak terjadi double-multiplication (seperti 10x menjadi 100x).
+    return math.max(baseIncome, 0)
+end
+
+local function formatUnitIncome(rawIncome, uData)
+    if rawIncome and rawIncome > 0 then
+        return formatMoney(rawIncome) .. "/s"
+    end
+    return "$0/s"
+end
+
+-- Scanner Unit Inventory Akurat (Hanya Unit murni, memfilter Potion / Currency)
+local function scanInventoryUnits()
+    local list = {}
+    local pState = getPlayerDataState()
+
+    if not UnitConfig then
+        pcall(function()
+            local RS = game:GetService("ReplicatedStorage")
+            local fw = RS:FindFirstChild("Framework")
+            local feats = fw and fw:FindFirstChild("Features")
+            local inv = feats and feats:FindFirstChild("Inventory")
+            local kinds = inv and inv:FindFirstChild("Kinds")
+            local uKind = kinds and kinds:FindFirstChild("Unit")
+            local uCfg = uKind and uKind:FindFirstChild("UnitConfig")
+            if uCfg then UnitConfig = require(uCfg) end
+        end)
+    end
+
+    if pState and pState.Inventory and typeof(pState.Inventory) == "table" then
+        for uId, uData in pairs(pState.Inventory) do
+            if typeof(uData) == "table" and (uData.name or uData.Name) then
+                local uName = tostring(uData.name or uData.Name)
+                local isUnit = false
+
+                -- Validasi ketat: cek UnitConfig.entries
+                if UnitConfig and UnitConfig.entries then
+                    local entry = UnitConfig.entries[uName]
+                    if entry and (entry.kind == "Unit" or entry.rarity) then
+                        isUnit = true
+                    end
+                else
+                    if not ALL_GAME_POTIONS[uName] 
+                       and uName ~= "Gems" 
+                       and uName ~= "Trait Reroll" 
+                       and uName ~= "Tickets" 
+                       and not uName:find("Potion") 
+                       and not uName:find("Ticket") then
+                        isUnit = true
+                    end
+                end
+
+                if isUnit then
+                    table.insert(list, {
+                        UUID = tostring(uId),
+                        Name = uName,
+                        Attributes = uData.attributes or {},
+                        Grade = (uData.attributes and uData.attributes.grade) or uData.grade or "None",
+                        Trait = (uData.attributes and uData.attributes.trait) or uData.trait or "None",
+                        Data = uData
+                    })
+                end
+            end
+        end
+    end
+    return list
+end
+
+local UnitDisplayMap = {}       -- [displayName] = UUID
+local UnitUUIDMap = {}          -- [UUID] = displayName
+local CurrentUnitDisplayList = {}
+
+local function refreshUnitDropdownList()
+    UnitDisplayMap = {}
+    UnitUUIDMap = {}
+    CurrentUnitDisplayList = {}
+
+    local units = scanInventoryUnits()
+
+    -- 1. Hitung raw income & format string untuk tiap unit
+    for _, u in ipairs(units) do
+        u.rawIncome = getUnitRawIncome(u.Data or u)
+        u.incomeStr = formatUnitIncome(u.rawIncome, u.Data or u)
+    end
+
+    -- 2. SORTING BERDASARKAN INCOME TERTINGGI KE TERENDAH
+    table.sort(units, function(a, b)
+        if a.rawIncome ~= b.rawIncome then
+            return a.rawIncome > b.rawIncome
+        end
+        return a.Name < b.Name
+    end)
+
+    -- 3. Hitung kemunculan nama agar unit kembar diberi tag (#1, #2, dst)
+    local nameOccurrences = {}
+    for _, u in ipairs(units) do
+        nameOccurrences[u.Name] = (nameOccurrences[u.Name] or 0) + 1
+    end
+
+    local currentCount = {}
+    for _, u in ipairs(units) do
+        local displayName = u.Name
+        if nameOccurrences[u.Name] > 1 then
+            currentCount[u.Name] = (currentCount[u.Name] or 0) + 1
+            displayName = string.format("%s #%d (%s)", u.Name, currentCount[u.Name], u.incomeStr)
+        else
+            displayName = string.format("%s (%s)", u.Name, u.incomeStr)
+        end
+
+        UnitDisplayMap[displayName] = u.UUID
+        UnitUUIDMap[u.UUID] = displayName
+        table.insert(CurrentUnitDisplayList, displayName)
+    end
+
+    if #CurrentUnitDisplayList == 0 then
+        table.insert(CurrentUnitDisplayList, "(Tidak Ada Unit)")
+        UnitDisplayMap["(Tidak Ada Unit)"] = ""
+    end
+
+    return CurrentUnitDisplayList
+end
+
+local GradeStatusLabel = nil
+local TraitStatusLabel = nil
+
+local function updateUnitStatsDisplay()
+    local uuid = Config.SelectedUnitUUID
+    if not uuid or uuid == "" then
+        if GradeStatusLabel then GradeStatusLabel:SetText(Config.Language == "EN" and "Current Grade: (Select Unit)" or "Grade Saat Ini: (Pilih Unit)") end
+        if TraitStatusLabel then TraitStatusLabel:SetText(Config.Language == "EN" and "Current Trait: (Select Unit)" or "Trait Saat Ini: (Pilih Unit)") end
+        return
+    end
+
+    local pState = getPlayerDataState()
+    local uData = pState and pState.Inventory and pState.Inventory[uuid]
+    if uData and typeof(uData) == "table" then
+        local curGrade = (uData.attributes and uData.attributes.grade) or uData.grade or "None"
+        local curTrait = (uData.attributes and uData.attributes.trait) or uData.trait or "None"
+        if GradeStatusLabel then GradeStatusLabel:SetText((Config.Language == "EN" and "Current Grade: " or "Grade Saat Ini: ") .. tostring(curGrade)) end
+        if TraitStatusLabel then TraitStatusLabel:SetText((Config.Language == "EN" and "Current Trait: " or "Trait Saat Ini: ") .. tostring(curTrait)) end
+    else
+        if GradeStatusLabel then GradeStatusLabel:SetText(Config.Language == "EN" and "Current Grade: -" or "Grade Saat Ini: -") end
+        if TraitStatusLabel then TraitStatusLabel:SetText(Config.Language == "EN" and "Current Trait: -" or "Trait Saat Ini: -") end
+    end
+end
+
+local function getRollGradeRemote()
+    if Remotes.RollGrade and Remotes.RollGrade:IsA("RemoteEvent") then return Remotes.RollGrade end
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local gs = net and net:FindFirstChild("GradeService")
+    local rem = (gs and gs:FindFirstChild("RE") and gs.RE:FindFirstChild("Roll")) or (gs and gs:FindFirstChild("Roll"))
+    if rem then Remotes.RollGrade = rem end
+    return rem
+end
+
+local function getRollTraitRemote()
+    if Remotes.RollTrait and Remotes.RollTrait:IsA("RemoteEvent") then return Remotes.RollTrait end
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local ts = net and net:FindFirstChild("TraitService")
+    local rem = (ts and ts:FindFirstChild("RE") and ts.RE:FindFirstChild("Roll")) or (ts and ts:FindFirstChild("Roll"))
+    if rem then Remotes.RollTrait = rem end
+    return rem
+end
+
+local function getSetGradeProtectedRemote()
+    if Remotes.SetGradeProtected and Remotes.SetGradeProtected:IsA("RemoteEvent") then return Remotes.SetGradeProtected end
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local gs = net and net:FindFirstChild("GradeService")
+    local rem = gs and gs:FindFirstChild("RE") and gs.RE:FindFirstChild("SetGradeProtected")
+    if rem then Remotes.SetGradeProtected = rem end
+    return rem
+end
+
+local function getSetTraitProtectedRemote()
+    if Remotes.SetTraitProtected and Remotes.SetTraitProtected:IsA("RemoteEvent") then return Remotes.SetTraitProtected end
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local ts = net and net:FindFirstChild("TraitService")
+    local rem = ts and ts:FindFirstChild("RE") and ts.RE:FindFirstChild("SetTraitProtected")
+    if rem then Remotes.SetTraitProtected = rem end
+    return rem
+end
+
+local function syncServerGradeProtections()
+    local rem = getSetGradeProtectedRemote()
+    if not rem then return end
+    for _, gTier in ipairs(GRADE_TIERS_LIST) do
+        local isProt = (Config.TargetGrades and Config.TargetGrades[gTier] == true)
+        pcall(function()
+            rem:FireServer(gTier, isProt)
+        end)
+    end
+end
+
+local function syncServerTraitProtections()
+    local rem = getSetTraitProtectedRemote()
+    if not rem then return end
+    for _, tName in ipairs(TRAIT_LIST) do
+        local isProt = (Config.TargetTraits and Config.TargetTraits[tName] == true)
+        pcall(function()
+            rem:FireServer(tName, isProt)
+        end)
+    end
 end
 
 -- Helper untuk membaca stats lengkap akun (Money, Rolls, Gems, Trait, Ticket, Jackpot)
@@ -2861,118 +3515,11 @@ end
 
 -- 🌟 AUTO EQUIP BEST RARITY & AUTO SELL JUNK BAG UNITS
 -- =============================================================================
-local isEquippingBestRarity = false
 local function autoEquipBestRarityUnits()
-    if isEquippingBestRarity then return end
-    local intRem = Remotes.InteractSlot
-    local equipRem = Remotes.UnitEquip
-    if not intRem then return end
-
-    local pState = getPlayerDataState()
-    if not pState or not pState.Inventory then return end
-
-    isEquippingBestRarity = true
-    pcall(function()
-        local maxSlots = math.max(6, tonumber(Config.MaxPlotSlots) or 30)
-        local equippedBySlot = {}
-        local protectedIds = {}
-        local totalSlots = 0
-
-        if pState.Slots then
-            for sIdx, sData in pairs(pState.Slots) do
-                local slotNum = tonumber(sIdx)
-                if slotNum and typeof(sData) == "table" and sData.unitId then
-                    local uId = tostring(sData.unitId)
-                    local uData = pState.Inventory and pState.Inventory[uId]
-                    equippedBySlot[slotNum] = {
-                        slot = slotNum,
-                        unitId = uId,
-                        name = uData and uData.name or "Unknown",
-                        chance = getUnitChance(uData),
-                        level = uData and uData.attributes and uData.attributes.level or 1,
-                        mutation = uData and uData.attributes and uData.attributes.mutation or "None"
-                    }
-                    protectedIds[uId] = true
-                    totalSlots = math.max(totalSlots, slotNum)
-                end
-            end
-        end
-
-        if pState.TowerTeam then
-            for _, tUnit in pairs(pState.TowerTeam) do
-                if typeof(tUnit) == "string" then protectedIds[tUnit] = true
-                elseif typeof(tUnit) == "table" then
-                    local tid = tUnit.unitId or tUnit.id or tUnit.UUID
-                    if tid then protectedIds[tostring(tid)] = true end
-                end
-            end
-        end
-
-        local bagUnits = {}
-        for uId, uData in pairs(pState.Inventory) do
-            local idStr = tostring(uId)
-            if typeof(uData) == "table" and uData.name and not protectedIds[idStr] then
-                table.insert(bagUnits, {
-                    id = idStr,
-                    name = uData.name,
-                    chance = getUnitChance(uData),
-                    level = uData.attributes and uData.attributes.level or 1,
-                    mutation = uData.attributes and uData.attributes.mutation or "None"
-                })
-            end
-        end
-
-        table.sort(bagUnits, function(a, b)
-            if a.chance ~= b.chance then
-                return a.chance > b.chance
-            end
-            return a.level > b.level
-        end)
-
-        local replacements = {}
-        for _, bagU in ipairs(bagUnits) do
-            local worstSlotNum = nil
-            local worstSlotChance = bagU.chance
-            for s = 1, math.max(6, totalSlots) do
-                local sl = equippedBySlot[s]
-                if not sl then
-                    worstSlotNum = s
-                    worstSlotChance = -1
-                    break
-                elseif sl.chance < worstSlotChance then
-                    worstSlotChance = sl.chance
-                    worstSlotNum = s
-                end
-            end
-
-            if worstSlotNum then
-                table.insert(replacements, {
-                    slot = worstSlotNum,
-                    oldUnit = equippedBySlot[worstSlotNum],
-                    newUnit = bagU
-                })
-                equippedBySlot[worstSlotNum] = {
-                    slot = worstSlotNum,
-                    unitId = bagU.id,
-                    name = bagU.name,
-                    chance = bagU.chance,
-                    level = bagU.level,
-                    mutation = bagU.mutation
-                }
-            end
-        end
-
-        for _, rep in ipairs(replacements) do
-            if rep.oldUnit then
-                pcall(function() intRem:FireServer(rep.slot) end)
-                task.wait(0.25)
-            end
-            pcall(function() intRem:FireServer(rep.slot, rep.newUnit.id) end)
-            if equipRem then pcall(function() equipRem:InvokeServer(rep.newUnit.id) end) end
-            task.wait(0.25)
-        end
-    end)
-    isEquippingBestRarity = false
+    local rem = getEquipBestRemote()
+    if rem then
+        pcall(function() rem:FireServer() end)
+    end
 end
 
 local isSellingBagUnits = false
@@ -3308,6 +3855,7 @@ task.spawn(function()
 end)
 
 -- Floating Logo Toggle Button
+do
 local CoreGui = (gethui and gethui()) or game:GetService("CoreGui") or player:WaitForChild("PlayerGui")
 local ToggleGui = Instance.new("ScreenGui")
 ToggleGui.Name = "ZetroX_ToggleScreenGui"
@@ -3332,7 +3880,10 @@ FloatCorner.Parent = FloatButton
 
 task.spawn(function()
     while task.wait(0.2) do
-        if Library.Unloaded then ToggleGui:Destroy() break end
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or Library.Unloaded then
+            pcall(function() ToggleGui:Destroy() end)
+            break
+        end
         pcall(function()
             if Library.Toggled ~= nil then
                 FloatButton.Visible = not Library.Toggled
@@ -3347,14 +3898,14 @@ local logoStartPos = UDim2.new()
 local logoDist = 0
 local logoConn = nil
 
-FloatButton.InputBegan:Connect(function(input)
+addConnection(FloatButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         logoDragging = true
         logoStartMouse = UserInputService:GetMouseLocation()
         logoStartPos = FloatButton.Position
         logoDist = 0
         if logoConn then logoConn:Disconnect() end
-        logoConn = RunService.RenderStepped:Connect(function()
+        logoConn = addConnection(RunService.RenderStepped:Connect(function()
             if logoDragging then
                 local currentMouse = UserInputService:GetMouseLocation()
                 local delta = currentMouse - logoStartMouse
@@ -3366,11 +3917,11 @@ FloatButton.InputBegan:Connect(function(input)
             else
                 if logoConn then logoConn:Disconnect() end
             end
-        end)
+        end))
     end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(input)
+addConnection(UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         if logoDragging then
             logoDragging = false
@@ -3378,7 +3929,8 @@ UserInputService.InputEnded:Connect(function(input)
             if logoDist < 6 then Library:Toggle() end
         end
     end
-end)
+end))
+end
 
 -- BILINGUAL LOCALIZATION REGISTRY
 local UI_ELEMENTS = {}
@@ -3394,8 +3946,8 @@ local Tabs = {
     Info        = Window:AddTab("Info", "info"),
     Farming     = Window:AddTab("Farming", "cpu"),
     DiceShop    = Window:AddTab("Dice & Sell", "shopping-cart"),
-    Skills      = Window:AddTab("Skills & Potions", "zap"),
-    Tower       = Window:AddTab("Tower & Combat", "shield"),
+    Skills      = Window:AddTab("Upgrade & Potions", "zap"),
+    Tower       = Window:AddTab("Utility", "wrench"),
     Quests      = Window:AddTab("Rewards & Codes", "gift"),
     Player      = Window:AddTab("Player & Misc", "user"),
     Discord     = Window:AddTab("Community", "message-square"),
@@ -3405,6 +3957,7 @@ local Tabs = {
 --------------------------------------------------------------------------------
 -- TAB 0: INFO (USER & SESSION OVERVIEW)
 --------------------------------------------------------------------------------
+do
 local InfoTab = Tabs.Info
 
 local UserGroup = InfoTab:AddGroupbox({
@@ -3589,7 +4142,7 @@ SocialsGroup:AddButton({
 -- Realtime update loop untuk Session Timer & Ping
 task.spawn(function()
     while task.wait(1) do
-        if Library.Unloaded then break end
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or Library.Unloaded then break end
         pcall(function()
             local elapsed = os.time() - sessionStartTime
             local hrs = math.floor(elapsed / 3600)
@@ -3616,23 +4169,25 @@ task.spawn(function()
         end)
     end
 end)
+end
 
 
 
 --------------------------------------------------------------------------------
 -- TAB 1: FARMING
 --------------------------------------------------------------------------------
-local FarmLobby = Tabs.Farming:AddGroupbox({ Side = "Left", Name = "Lobby Roll & Rebirth", IconName = "play" })
+do
+local FarmLobby = Tabs.Farming:AddGroupbox({ Side = "Left", Name = "Lobby Farming", IconName = "play" })
 
 registerUI(FarmLobby:AddToggle("AutoRoll", {
-    Text = (Config.Language == "EN" and "Auto Roll Dice" or "Auto Roll Dadu"),
+    Text = (Config.Language == "EN" and "Auto Roll" or "Auto Roll Dadu"),
     Default = Config.AutoRoll or false,
-    Tooltip = "Otomatis roll dadu di lobby secara cepat / Auto roll dice in lobby",
+    Tooltip = "Automatically roll dice in lobby",
     Callback = function(Value)
         Config.AutoRoll = Value
         triggerAutoSave()
     end,
-}), "Auto Roll Dadu", "Auto Roll Dice")
+}), "Auto Roll Dadu", "Auto Roll")
 
 registerUI(FarmLobby:AddSlider("RollDelay", {
     Text = (Config.Language == "EN" and "Roll Delay" or "Jeda Roll"),
@@ -3641,7 +4196,7 @@ registerUI(FarmLobby:AddSlider("RollDelay", {
     Max = 1.0,
     Rounding = 2,
     Suffix = "s",
-    Tooltip = "Kecepatan antar roll (0.1 - 0.5s rekomendasi)",
+    Tooltip = "Delay between rolls (0.1s - 0.5s recommended)",
     Callback = function(Value)
         Config.RollDelay = Value
         triggerAutoSave()
@@ -3653,7 +4208,7 @@ FarmLobby:AddDivider()
 registerUI(FarmLobby:AddToggle("AutoRebirth", {
     Text = "Auto Rebirth",
     Default = Config.AutoRebirth or false,
-    Tooltip = "Otomatis rebirth saat uang mencukupi target game",
+    Tooltip = "Automatically rebirth when requirements are met",
     Callback = function(Value)
         Config.AutoRebirth = Value
         triggerAutoSave()
@@ -3661,32 +4216,33 @@ registerUI(FarmLobby:AddToggle("AutoRebirth", {
 }), "Auto Rebirth", "Auto Rebirth")
 
 registerUI(FarmLobby:AddSlider("RebirthDelay", {
-    Text = (Config.Language == "EN" and "Rebirth Check Delay" or "Jeda Cek Rebirth"),
+    Text = (Config.Language == "EN" and "Rebirth Interval" or "Interval Rebirth"),
     Default = Config.RebirthDelay or 5,
     Min = 1,
     Max = 30,
     Rounding = 0,
     Suffix = "s",
+    Tooltip = "Delay between rebirth checks",
     Callback = function(Value)
         Config.RebirthDelay = Value
         triggerAutoSave()
     end,
-}), "Jeda Cek Rebirth", "Rebirth Check Delay")
+}), "Interval Rebirth", "Rebirth Interval")
 
 FarmLobby:AddDivider()
 
 registerUI(FarmLobby:AddToggle("AutoEquipBest", {
-    Text = (Config.Language == "EN" and "Auto Equip Best Units" or "Auto Pasang Unit Terbaik"),
+    Text = (Config.Language == "EN" and "Auto Equip Best" or "Auto Pasang Unit Terbaik"),
     Default = Config.AutoEquipBest or false,
-    Tooltip = "Otomatis pasang unit terkuat yang dimiliki ke plot (Algoritma Rarity)",
+    Tooltip = "Automatically equip highest rarity units to plot",
     Callback = function(Value)
         Config.AutoEquipBest = Value
         triggerAutoSave()
     end,
-}), "Auto Pasang Unit Terbaik", "Auto Equip Best Units")
+}), "Auto Pasang Unit Terbaik", "Auto Equip Best")
 
 registerUI(FarmLobby:AddSlider("EquipBestDelay", {
-    Text = (Config.Language == "EN" and "Equip Check Interval" or "Interval Cek Unit"),
+    Text = (Config.Language == "EN" and "Equip Interval" or "Interval Equip"),
     Default = Config.EquipBestDelay or 5,
     Min = 2,
     Max = 30,
@@ -3696,10 +4252,10 @@ registerUI(FarmLobby:AddSlider("EquipBestDelay", {
         Config.EquipBestDelay = Value
         triggerAutoSave()
     end,
-}), "Interval Cek Unit", "Equip Check Interval")
+}), "Interval Equip", "Equip Interval")
 
 registerUI(FarmLobby:AddButton({
-    Text = (Config.Language == "EN" and "Equip Best Units Now" or "Pasang Unit Terbaik Sekarang"),
+    Text = (Config.Language == "EN" and "Equip Best Now" or "Pasang Unit Terbaik"),
     Func = function()
         task.spawn(function()
             autoEquipBestRarityUnits()
@@ -3710,22 +4266,22 @@ registerUI(FarmLobby:AddButton({
             })
         end)
     end,
-}), "Pasang Unit Terbaik Sekarang", "Equip Best Units Now")
+}), "Pasang Unit Terbaik", "Equip Best Now")
 
-local FarmPlot = Tabs.Farming:AddGroupbox({ Side = "Right", Name = "Plot Balance & Upgrades", IconName = "home" })
+local FarmPlot = Tabs.Farming:AddGroupbox({ Side = "Right", Name = "Plot Farming", IconName = "home" })
 
 registerUI(FarmPlot:AddToggle("AutoClaimPlot", {
-    Text = (Config.Language == "EN" and "Auto Claim Plot Balance" or "Auto Klaim Saldo Plot"),
+    Text = (Config.Language == "EN" and "Auto Collect" or "Auto Collect (Klaim Saldo)"),
     Default = Config.AutoClaimPlot or false,
-    Tooltip = "Klaim uang hasil plot (Remote CollectBalance + Injak Pad)",
+    Tooltip = "Automatically collect money from plot balance",
     Callback = function(Value)
         Config.AutoClaimPlot = Value
         triggerAutoSave()
     end,
-}), "Auto Klaim Saldo Plot", "Auto Claim Plot Balance")
+}), "Auto Collect (Klaim Saldo)", "Auto Collect")
 
 registerUI(FarmPlot:AddSlider("ClaimPlotDelay", {
-    Text = (Config.Language == "EN" and "Claim Delay" or "Jeda Klaim"),
+    Text = (Config.Language == "EN" and "Collect Interval" or "Interval Collect"),
     Default = Config.ClaimPlotDelay or 1.5,
     Min = 0.5,
     Max = 5.0,
@@ -3735,48 +4291,48 @@ registerUI(FarmPlot:AddSlider("ClaimPlotDelay", {
         Config.ClaimPlotDelay = Value
         triggerAutoSave()
     end,
-}), "Jeda Klaim", "Claim Delay")
+}), "Interval Collect", "Collect Interval")
 
 FarmPlot:AddDivider()
 
 registerUI(FarmPlot:AddToggle("AutoUpgradeUnits", {
-    Text = (Config.Language == "EN" and "Auto Upgrade Plot Slots" or "Auto Upgrade Slot Plot"),
+    Text = (Config.Language == "EN" and "Auto Upgrade Slots" or "Auto Upgrade Slot"),
     Default = Config.AutoUpgradeUnits or false,
-    Tooltip = "Otomatis naikkan level slot unit di plot",
+    Tooltip = "Automatically upgrade plot unit slot levels",
     Callback = function(Value)
         Config.AutoUpgradeUnits = Value
         triggerAutoSave()
     end,
-}), "Auto Upgrade Slot Plot", "Auto Upgrade Plot Slots")
+}), "Auto Upgrade Slot", "Auto Upgrade Slots")
 
 registerUI(FarmPlot:AddSlider("MaxUnitLevel", {
-    Text = (Config.Language == "EN" and "Max Unit Level" or "Batas Maks Level Unit"),
+    Text = (Config.Language == "EN" and "Max Slot Level" or "Batas Max Level"),
     Default = Config.MaxUnitLevel or 40,
     Min = 1,
     Max = 100,
     Rounding = 0,
-    Tooltip = "Batas maksimal level slot sebelum berhenti",
+    Tooltip = "Stop upgrading when slot reaches this level",
     Callback = function(Value)
         Config.MaxUnitLevel = Value
         triggerAutoSave()
     end,
-}), "Batas Maks Level Unit", "Max Unit Level")
+}), "Batas Max Level", "Max Slot Level")
 
 registerUI(FarmPlot:AddSlider("MaxPlotSlots", {
-    Text = (Config.Language == "EN" and "Max Plot Slots" or "Maksimal Slot Plot"),
+    Text = (Config.Language == "EN" and "Max Plot Slots" or "Max Slot Plot"),
     Default = Config.MaxPlotSlots or 30,
     Min = 1,
     Max = 30,
     Rounding = 0,
-    Tooltip = "Jumlah slot yang dicek (Lantai 1 & 2)",
+    Tooltip = "Number of slots to upgrade (Floor 1 & 2)",
     Callback = function(Value)
         Config.MaxPlotSlots = Value
         triggerAutoSave()
     end,
-}), "Maksimal Slot Plot", "Max Plot Slots")
+}), "Max Slot Plot", "Max Plot Slots")
 
 registerUI(FarmPlot:AddSlider("UpgradeUnitDelay", {
-    Text = (Config.Language == "EN" and "Slot Upgrade Delay" or "Jeda Upgrade Slot"),
+    Text = (Config.Language == "EN" and "Upgrade Interval" or "Interval Upgrade"),
     Default = Config.UpgradeUnitDelay or 5,
     Min = 1,
     Max = 30,
@@ -3786,15 +4342,18 @@ registerUI(FarmPlot:AddSlider("UpgradeUnitDelay", {
         Config.UpgradeUnitDelay = Value
         triggerAutoSave()
     end,
-}), "Jeda Upgrade Slot", "Slot Upgrade Delay")
+}), "Interval Upgrade", "Upgrade Interval")
+
+end
 
 --------------------------------------------------------------------------------
 -- TAB 2: DICE SHOP & AUTO SELL
 --------------------------------------------------------------------------------
-local DiceGroup = Tabs.DiceShop:AddGroupbox({ Side = "Left", Name = "Progressive Dice Shop (25 Tiers)", IconName = "dices" })
+do
+local DiceGroup = Tabs.DiceShop:AddGroupbox({ Side = "Left", Name = "Dice Shop", IconName = "dices" })
 
--- Label Status Dadu (100% Fixed: Anti-Crash & Real-time Update)
-local DiceStatusLabel = DiceGroup:AddLabel("Dadu: Normal (Tier 1/25)")
+-- Label Status Dadu (Anti-Crash & Real-time Update)
+local DiceStatusLabel = DiceGroup:AddLabel("Dice: Normal (Tier 1/" .. tostring(#FALLBACK_25_DICES) .. ")")
 
 local function updateDiceStatusLabel()
     local ok, dName, dTier = pcall(detectEquippedDice)
@@ -3804,11 +4363,8 @@ local function updateDiceStatusLabel()
         curName = tostring(dName)
         curTier = tonumber(dTier) or 1
     end
-    if Config.Language == "EN" then
-        DiceStatusLabel:SetText(string.format("Dice: %s (Tier %d/25)", curName, curTier))
-    else
-        DiceStatusLabel:SetText(string.format("Dadu: %s (Tier %d/25)", curName, curTier))
-    end
+    local maxT = #FALLBACK_25_DICES
+    DiceStatusLabel:SetText(string.format("Dice: %s (Tier %d/%d)", curName, curTier, maxT))
 end
 
 -- Eksekusi awal & loop aman tiap 1.5 detik
@@ -3816,14 +4372,15 @@ task.spawn(function()
     task.wait(0.5)
     updateDiceStatusLabel()
     while task.wait(1.5) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         pcall(updateDiceStatusLabel)
     end
 end)
 
 registerUI(DiceGroup:AddToggle("AutoBuyDice", {
-    Text = (Config.Language == "EN" and "Auto Buy Next Tier Dice" or "Auto Beli Dadu Tier Berikutnya"),
+    Text = (Config.Language == "EN" and "Auto Buy Dice" or "Auto Beli Dadu"),
     Default = Config.AutoBuyDice or false,
-    Tooltip = "Otomatis membeli dadu tier berikutnya saat uang cukup (Smart Progressive Buyer)",
+    Tooltip = "Automatically purchase higher tier dice when balance allows",
     Callback = function(Value)
         Config.AutoBuyDice = Value
         if Value then
@@ -3831,12 +4388,12 @@ registerUI(DiceGroup:AddToggle("AutoBuyDice", {
         end
         triggerAutoSave()
     end,
-}), "Auto Beli Dadu Tier Berikutnya", "Auto Buy Next Tier Dice")
+}), "Auto Beli Dadu", "Auto Buy Dice")
 
 registerUI(DiceGroup:AddToggle("AutoEquipBestDice", {
     Text = (Config.Language == "EN" and "Auto Equip Best Dice" or "Auto Pasang Dadu Terbaik"),
     Default = Config.AutoEquipBestDice or false,
-    Tooltip = "Otomatis memakai dadu tier tertinggi yang sudah dimiliki",
+    Tooltip = "Automatically equip the highest unlocked dice tier",
     Callback = function(Value)
         Config.AutoEquipBestDice = Value
         if Value then
@@ -3847,7 +4404,7 @@ registerUI(DiceGroup:AddToggle("AutoEquipBestDice", {
 }), "Auto Pasang Dadu Terbaik", "Auto Equip Best Dice")
 
 registerUI(DiceGroup:AddSlider("BuyDiceDelay", {
-    Text = (Config.Language == "EN" and "Buy Dice Interval" or "Interval Beli Dadu"),
+    Text = (Config.Language == "EN" and "Buy Interval" or "Interval Beli"),
     Default = Config.BuyDiceDelay or 2,
     Min = 1,
     Max = 10,
@@ -3857,53 +4414,53 @@ registerUI(DiceGroup:AddSlider("BuyDiceDelay", {
         Config.BuyDiceDelay = Value
         triggerAutoSave()
     end,
-}), "Interval Beli Dadu", "Buy Dice Interval")
+}), "Interval Beli", "Buy Interval")
 
 DiceGroup:AddDivider()
 
 registerUI(DiceGroup:AddButton({
-    Text = (Config.Language == "EN" and "Buy Next Tier Dice Now" or "Beli Dadu Tier Berikutnya"),
+    Text = (Config.Language == "EN" and "Buy Next Dice" or "Beli Dadu Berikutnya"),
     Func = function()
         task.spawn(function()
             smartProgressiveBuyDice()
             Library:Notify({
                 Title = "ZetroX Hub",
-                Description = (Config.Language == "EN" and "Checking and buying next tier dice..." or "Mengecek & membeli dadu tier berikutnya..."),
+                Description = (Config.Language == "EN" and "Checking and buying next dice..." or "Mengecek & membeli dadu berikutnya..."),
                 Time = 3
             })
         end)
     end,
-}), "Beli Dadu Tier Berikutnya", "Buy Next Tier Dice Now")
+}), "Beli Dadu Berikutnya", "Buy Next Dice")
 
-local SellGroup = Tabs.DiceShop:AddGroupbox({ Side = "Right", Name = "Auto Sell Filter (Threshold)", IconName = "trash-2" })
+local SellGroup = Tabs.DiceShop:AddGroupbox({ Side = "Right", Name = "Auto Sell", IconName = "trash-2" })
 
 registerUI(SellGroup:AddToggle("AutoSellThreshold", {
-    Text = (Config.Language == "EN" and "Enable Auto Sell Threshold" or "Aktifkan Batas Jual Otomatis"),
+    Text = (Config.Language == "EN" and "Auto Sell Threshold" or "Auto Sell Threshold"),
     Default = Config.AutoSellThreshold or false,
-    Tooltip = "Jual unit otomatis yang ada di bawah batas nilai threshold",
+    Tooltip = "Automatically sell units below the configured threshold",
     Callback = function(Value)
         Config.AutoSellThreshold = Value
         triggerAutoSave()
     end,
-}), "Aktifkan Batas Jual Otomatis", "Enable Auto Sell Threshold")
+}), "Auto Sell Threshold", "Auto Sell Threshold")
 
 registerUI(SellGroup:AddToggle("AutoSyncThresholdWithDice", {
-    Text = (Config.Language == "EN" and "Auto Sync with Dice Tier" or "Otomatis Sinkronkan dengan Tier Dadu"),
+    Text = (Config.Language == "EN" and "Auto Sync With Dice" or "Auto Sync Dadu"),
     Default = Config.AutoSyncThresholdWithDice ~= false,
-    Tooltip = "Otomatis sesuaikan threshold saat dadu naik tier",
+    Tooltip = "Automatically adjust threshold when equipped dice changes tier",
     Callback = function(Value)
         Config.AutoSyncThresholdWithDice = Value
         triggerAutoSave()
     end,
-}), "Otomatis Sinkronkan dengan Tier Dadu", "Auto Sync with Dice Tier")
+}), "Auto Sync Dadu", "Auto Sync With Dice")
 
 registerUI(SellGroup:AddInput("CustomThresholdInput", {
     Default = "100k",
     Numeric = false,
     Finished = true,
-    Text = (Config.Language == "EN" and "Manual Threshold Value" or "Nilai Threshold Manual"),
-    Tooltip = "Masukkan nilai (contoh: 1000, 100k, 1m, 15b, 1t)",
-    Placeholder = "100k, 15b, dll",
+    Text = (Config.Language == "EN" and "Custom Threshold" or "Threshold Kustom"),
+    Tooltip = "Set threshold value (e.g. 100k, 1m, 15b, 1t)",
+    Placeholder = "e.g. 100k, 15b",
     Callback = function(Value)
         local parsed = parseFormattedNumber(Value)
         if parsed and parsed > 0 then
@@ -3917,14 +4474,14 @@ registerUI(SellGroup:AddInput("CustomThresholdInput", {
             })
         end
     end,
-}), "Nilai Threshold Manual", "Manual Threshold Value")
+}), "Threshold Kustom", "Custom Threshold")
 
 SellGroup:AddDivider()
 
--- Sub-fitur Pengaturan Kustom Threshold Tier Tinggi (Tier 17 s/d 25)
+-- Sub-fitur Pengaturan Kustom Threshold Tier Tinggi (Tier 17 s/d 27)
 local customTierOptions = {
-    "Tier 17: Dragon (Naga)",
-    "Tier 18: Royal (Kerajaan)",
+    "Tier 17: Dragon",
+    "Tier 18: Royal",
     "Tier 19: Prismatic",
     "Tier 20: Arcane",
     "Tier 21: Corrupted",
@@ -3932,11 +4489,13 @@ local customTierOptions = {
     "Tier 23: Chrono",
     "Tier 24: Cyber",
     "Tier 25: Toxic",
+    "Tier 26: Ethereal",
+    "Tier 27: Frostfire",
 }
 
 local tierOptionMap = {
-    ["Tier 17: Dragon (Naga)"] = 17,
-    ["Tier 18: Royal (Kerajaan)"] = 18,
+    ["Tier 17: Dragon"] = 17,
+    ["Tier 18: Royal"] = 18,
     ["Tier 19: Prismatic"] = 19,
     ["Tier 20: Arcane"] = 20,
     ["Tier 21: Corrupted"] = 21,
@@ -3944,16 +4503,18 @@ local tierOptionMap = {
     ["Tier 23: Chrono"] = 23,
     ["Tier 24: Cyber"] = 24,
     ["Tier 25: Toxic"] = 25,
+    ["Tier 26: Ethereal"] = 26,
+    ["Tier 27: Frostfire"] = 27,
 }
 
 local selectedCustomTier = 17
 
 registerUI(SellGroup:AddDropdown("CustomTierSelect", {
     Values = customTierOptions,
-    Default = "Tier 17: Dragon (Naga)",
+    Default = "Tier 17: Dragon",
     Multi = false,
-    Text = (Config.Language == "EN" and "Select High Tier (17-25)" or "Pilih High Tier Dadu (17-25)"),
-    Tooltip = "Pilih tier dadu untuk mengatur custom threshold-nya",
+    Text = (Config.Language == "EN" and "Select Tier (17-27)" or "Pilih Tier (17-27)"),
+    Tooltip = "Select tier to configure custom sell threshold",
     Callback = function(Value)
         local tNum = tierOptionMap[Value]
         if tNum then
@@ -3963,16 +4524,16 @@ registerUI(SellGroup:AddDropdown("CustomTierSelect", {
                 Options.CustomTierValInput:SetValue(tostring(curVal))
             end
         end
-    end
-}), "Pilih High Tier Dadu (17-25)", "Select High Tier (17-25)")
+    end,
+}), "Pilih Tier (17-27)", "Select Tier (17-27)")
 
 registerUI(SellGroup:AddInput("CustomTierValInput", {
     Default = tostring((Config.CustomTierThresholds and (Config.CustomTierThresholds[17] or Config.CustomTierThresholds["17"])) or "15b"),
     Numeric = false,
     Finished = true,
-    Text = (Config.Language == "EN" and "Threshold for Selected Tier" or "Nilai Threshold Tier Terpilih"),
-    Tooltip = "Nilai batas jual untuk tier ini (misal: 15b, 65b, 250b, 1t, 10t, dll)",
-    Placeholder = "contoh: 15b, 1t",
+    Text = (Config.Language == "EN" and "Tier Threshold" or "Threshold Tier"),
+    Tooltip = "Threshold for selected tier (e.g. 15b, 65b, 250b, 1t, 10t)",
+    Placeholder = "e.g. 15b, 1t",
     Callback = function(Value)
         local cleanVal = Value:lower():gsub("%s+", "")
         if cleanVal ~= "" then
@@ -3993,23 +4554,23 @@ registerUI(SellGroup:AddInput("CustomTierValInput", {
                 Time = 3
             })
         end
-    end
-}), "Nilai Threshold Tier Terpilih", "Threshold for Selected Tier")
+    end,
+}), "Threshold Tier", "Tier Threshold")
 
 SellGroup:AddDivider()
 
 registerUI(SellGroup:AddToggle("AutoSellInventory", {
-    Text = (Config.Language == "EN" and "Auto Sell Junk Bag Units" or "Auto Jual Unit Sampah Tas"),
+    Text = (Config.Language == "EN" and "Auto Sell Junk Units" or "Auto Jual Unit Sampah"),
     Default = Config.AutoSellInventory or false,
-    Tooltip = "Otomatis bersihkan tas dari unit-unit sampah di bawah threshold",
+    Tooltip = "Automatically clear inventory of units below threshold",
     Callback = function(Value)
         Config.AutoSellInventory = Value
         triggerAutoSave()
     end,
-}), "Auto Jual Unit Sampah Tas", "Auto Sell Junk Bag Units")
+}), "Auto Jual Unit Sampah", "Auto Sell Junk Units")
 
 registerUI(SellGroup:AddSlider("SellInventoryDelay", {
-    Text = (Config.Language == "EN" and "Sell Bag Interval" or "Interval Jual Sampah Tas"),
+    Text = (Config.Language == "EN" and "Sell Interval" or "Interval Jual"),
     Default = Config.SellInventoryDelay or 25,
     Min = 5,
     Max = 60,
@@ -4019,10 +4580,10 @@ registerUI(SellGroup:AddSlider("SellInventoryDelay", {
         Config.SellInventoryDelay = Value
         triggerAutoSave()
     end,
-}), "Interval Jual Sampah Tas", "Sell Bag Interval")
+}), "Interval Jual", "Sell Interval")
 
 registerUI(SellGroup:AddButton({
-    Text = (Config.Language == "EN" and "Sell Junk Bag Units Below Threshold Now" or "Jual Unit Tas di Bawah Threshold Sekarang"),
+    Text = (Config.Language == "EN" and "Sell Junk Units Now" or "Jual Unit Sampah Sekarang"),
     Func = function()
         task.spawn(function()
             autoSellBagUnitsBelowThreshold()
@@ -4033,25 +4594,25 @@ registerUI(SellGroup:AddButton({
             })
         end)
     end,
-}), "Jual Unit Tas di Bawah Threshold Sekarang", "Sell Junk Bag Units Below Threshold Now")
+}), "Jual Unit Sampah Sekarang", "Sell Junk Units Now")
 
 --------------------------------------------------------------------------------
 -- TAB 3: SKILL TREE & POTIONS
 --------------------------------------------------------------------------------
-local SkillGroup = Tabs.Skills:AddGroupbox({ Side = "Left", Name = "Player Skill Tree Auto-Unlock", IconName = "tree" })
+local SkillGroup = Tabs.Skills:AddGroupbox({ Side = "Left", Name = "Auto Upgrade", IconName = "Upgrade" })
 
 registerUI(SkillGroup:AddToggle("AutoUpgradePlayerStats", {
-    Text = (Config.Language == "EN" and "Auto Unlock All 8 Skill Branches" or "Buka Semua 8 Cabang Skill"),
+    Text = (Config.Language == "EN" and "Auto Upgrade" or "Auto Unlock"),
     Default = Config.AutoUpgradePlayerStats or false,
-    Tooltip = "Otomatis buka dan naikkan semua cabang skill tree pemain",
+    Tooltip = "Automatically unlock and upgrade",
     Callback = function(Value)
         Config.AutoUpgradePlayerStats = Value
         triggerAutoSave()
     end,
-}), "Buka Semua 8 Cabang Skill", "Auto Unlock All 8 Skill Branches")
+}), "Auto Unlock Skill", "Auto Unlock Skills")
 
 registerUI(SkillGroup:AddSlider("UpgradePlayerStatsDelay", {
-    Text = (Config.Language == "EN" and "Skill Upgrade Delay" or "Jeda Upgrade Skill"),
+    Text = (Config.Language == "EN" and "Upgrade Interval" or "Interval Upgrade"),
     Default = Config.UpgradePlayerStatsDelay or 60,
     Min = 5,
     Max = 300,
@@ -4061,7 +4622,7 @@ registerUI(SkillGroup:AddSlider("UpgradePlayerStatsDelay", {
         Config.UpgradePlayerStatsDelay = Value
         triggerAutoSave()
     end,
-}), "Jeda Upgrade Skill", "Skill Upgrade Delay")
+}), "Interval Upgrade", "Upgrade Interval")
 
 SkillGroup:AddLabel("• Money, Luck, Fortune")
 SkillGroup:AddLabel("• Roll Speed, Sell, Storage")
@@ -4070,7 +4631,7 @@ SkillGroup:AddLabel("• Walkspeed, Damage, Health")
 SkillGroup:AddDivider()
 
 registerUI(SkillGroup:AddButton({
-    Text = (Config.Language == "EN" and "Scan & Unlock Skill Tree Now" or "Pindai & Buka Skill Tree Sekarang"),
+    Text = (Config.Language == "EN" and "Upgrade Now" or "Upgade Sekarang"),
     Func = function()
         task.spawn(function()
             local dynNodes = getDynamicSkillNodes()
@@ -4080,27 +4641,27 @@ registerUI(SkillGroup:AddButton({
             end
             Library:Notify({
                 Title = "ZetroX Hub",
-                Description = (Config.Language == "EN" and "Skill tree scan & upgrade completed!" or "Proses scan & upgrade skill tree selesai!"),
+                Description = (Config.Language == "EN" and " upgrade completed!" or "upgrade selesai!"),
                 Time = 3
             })
         end)
     end,
-}), "Pindai & Buka Skill Tree Sekarang", "Scan & Unlock Skill Tree Now")
+}), "Upgrade Sekarang", "Upgrade Now")
 
-local PotionGroup = Tabs.Skills:AddGroupbox({ Side = "Right", Name = "Auto Use Potions", IconName = "flask-conical" })
+local PotionGroup = Tabs.Skills:AddGroupbox({ Side = "Right", Name = "Auto Potions", IconName = "flask-conical" })
 
 registerUI(PotionGroup:AddToggle("AutoUsePotion", {
-    Text = (Config.Language == "EN" and "Auto Drink Potions" or "Auto Minum Potion"),
+    Text = (Config.Language == "EN" and "Auto Use Potions" or "Auto Pakai Potion"),
     Default = Config.AutoUsePotion or false,
-    Tooltip = "Otomatis minum potion buff dari inventory",
+    Tooltip = "Automatically consume potions from inventory",
     Callback = function(Value)
         Config.AutoUsePotion = Value
         triggerAutoSave()
     end,
-}), "Auto Minum Potion", "Auto Drink Potions")
+}), "Auto Use Potion", "Auto Use Potions")
 
 registerUI(PotionGroup:AddSlider("PotionDelay", {
-    Text = (Config.Language == "EN" and "Potion Drink Interval" or "Interval Minum Potion"),
+    Text = (Config.Language == "EN" and "Potion Interval" or "Interval Potion"),
     Default = Config.PotionDelay or 5,
     Min = 2,
     Max = 30,
@@ -4110,37 +4671,39 @@ registerUI(PotionGroup:AddSlider("PotionDelay", {
         Config.PotionDelay = Value
         triggerAutoSave()
     end,
-}), "Interval Minum Potion", "Potion Drink Interval")
+}), "Interval Potion", "Potion Interval")
 
-local ALL_POTION_NAMES = {
-    "Luck I", "Luck II", "Luck III",
-    "Damage I", "Damage II", "Damage III",
-    "Income I", "Income II", "Income III",
-    "Dragon Luck I", "Dragon Luck II", "Dragon Luck III",
-    "Dragon Damage I", "Dragon Damage II", "Dragon Damage III",
-    "Dragon Income I", "Dragon Income II", "Dragon Income III",
-    "Cursed Luck I", "Cursed Luck II", "Cursed Luck III",
-    "Cursed Damage I", "Cursed Damage II", "Cursed Damage III",
-    "Cursed Income I", "Cursed Income II", "Cursed Income III",
-    "Pirate Luck I", "Pirate Luck II", "Pirate Luck III",
-    "Pirate Damage I", "Pirate Damage II", "Pirate Damage III",
-    "Pirate Income I", "Pirate Income II", "Pirate Income III",
-    "Leaf Luck I", "Leaf Luck II", "Leaf Luck III",
-    "Leaf Damage I", "Leaf Damage II", "Leaf Damage III",
-    "Leaf Income I", "Leaf Income II", "Leaf Income III"
-}
-
-registerUI(PotionGroup:AddDropdown("PotionSelect", {
-    Values = ALL_POTION_NAMES,
-    Default = { "Luck I", "Luck II", "Damage I", "Income I" },
-    Multi = true,
-    Text = (Config.Language == "EN" and "Selected Potions" or "Pilihan Potion"),
-    Tooltip = "Pilih jenis potion yang akan diminum otomatis",
+-- Dropdown Tier Potion
+registerUI(PotionGroup:AddDropdown("SelectedPotionTier", {
+    Values = AVAILABLE_BOOST_TIERS,
+    Default = (Config.SelectedPotionTier and Config.SelectedPotionTier ~= "") and Config.SelectedPotionTier or "Tier I",
+    Multi = false,
+    Text = (Config.Language == "EN" and "Potion Tier" or "Tier Potion"),
+    Tooltip = "Select potion tier to consume",
     Callback = function(Value)
-        Config.PotionList = Value
+        if not Value or Value == "" then
+            Value = "Tier I"
+            if Options.SelectedPotionTier then
+                Options.SelectedPotionTier:SetValue("Tier I")
+            end
+        end
+        Config.SelectedPotionTier = Value
         triggerAutoSave()
     end,
-}), "Pilihan Potion", "Selected Potions")
+}), "Tier Potion", "Potion Tier")
+
+-- Dropdown Boost
+registerUI(PotionGroup:AddDropdown("SelectedBoosts", {
+    Values = AVAILABLE_BOOST_CATEGORIES,
+    Default = Config.SelectedBoosts or { ["Luck"] = true, ["Damage"] = true, ["Income"] = true },
+    Multi = true,
+    Text = (Config.Language == "EN" and "Boost Types" or "Jenis Boost"),
+    Tooltip = "Select boost types to consume automatically",
+    Callback = function(Value)
+        Config.SelectedBoosts = Value
+        triggerAutoSave()
+    end,
+}), "Jenis Boost", "Boost Types")
 
 --------------------------------------------------------------------------------
 -- TAB 4: TOWER & COMBAT
@@ -4148,40 +4711,40 @@ registerUI(PotionGroup:AddDropdown("PotionSelect", {
 local TowerGroup = Tabs.Tower:AddGroupbox({ Side = "Left", Name = "Tower Progression", IconName = "castle" })
 
 registerUI(TowerGroup:AddToggle("AutoTowerRoll", {
-    Text = (Config.Language == "EN" and "Auto Tower Rotation" or "Auto Rotasi Tower"),
+    Text = (Config.Language == "EN" and "Auto Tower" or "Auto Tower"),
     Default = Config.AutoTowerRoll or false,
-    Tooltip = "Otomatis masuk dan bertarung di tower secara berkala",
+    Tooltip = "Automatically enter and clear towers in sequence",
     Callback = function(Value)
         Config.AutoTowerRoll = Value
         triggerAutoSave()
     end,
-}), "Auto Rotasi Tower", "Auto Tower Rotation")
+}), "Auto Tower", "Auto Tower")
 
 registerUI(TowerGroup:AddToggle("SkipLowTierTowers", {
-    Text = (Config.Language == "EN" and "Skip Low Tier Towers" or "Lewati Tower Tier Rendah"),
+    Text = (Config.Language == "EN" and "Skip Low Tiers" or "Skip Tier Rendah"),
     Default = Config.SkipLowTierTowers or false,
-    Tooltip = "Lewati tower mudah jika level/dadu sudah tinggi",
+    Tooltip = "Skip lower difficulty towers",
     Callback = function(Value)
         Config.SkipLowTierTowers = Value
         triggerAutoSave()
     end,
-}), "Lewati Tower Tier Rendah", "Skip Low Tier Towers")
+}), "Skip Tier Rendah", "Skip Low Tiers")
 
 registerUI(TowerGroup:AddDropdown("TowerSelection", {
     Values = { "DragonTower", "CursedTower", "PirateTower", "HiddenLeafTower", "InfinityTower" },
     Default = { "DragonTower", "CursedTower", "PirateTower", "HiddenLeafTower", "InfinityTower" },
     Multi = true,
-    Text = (Config.Language == "EN" and "Enabled Towers" or "Tower yang Diaktifkan"),
+    Text = (Config.Language == "EN" and "Selected Towers" or "Tower Terpilih"),
     Callback = function(Value)
         for k in pairs(Config.TowersEnabled) do
             Config.TowersEnabled[k] = (Value[k] == true)
         end
         triggerAutoSave()
     end,
-}), "Tower yang Diaktifkan", "Enabled Towers")
+}), "Tower Terpilih", "Selected Towers")
 
 registerUI(TowerGroup:AddButton({
-    Text = (Config.Language == "EN" and "Equip Best Tower Team" or "Pasang Tim Tower Terbaik"),
+    Text = (Config.Language == "EN" and "Equip Best Tower Team" or "Pasang Tim Tower"),
     Func = function()
         safeCallRemote(Remotes.EquipBestTowerTeam)
         Library:Notify({
@@ -4190,68 +4753,275 @@ registerUI(TowerGroup:AddButton({
             Time = 3
         })
     end,
-}), "Pasang Tim Tower Terbaik", "Equip Best Tower Team")
+}), "Pasang Tim Tower", "Equip Best Tower Team")
 
-local TraitGroup = Tabs.Tower:AddGroupbox({ Side = "Right", Name = "Traits & Grades (Gems)", IconName = "sparkles" })
+--------------------------------------------------------------------------------
+-- TRADE GROUPBOX (TAB UTILITY)
+--------------------------------------------------------------------------------
+local TradeGroup = Tabs.Tower:AddGroupbox({ Side = "Left", Name = "Trade", IconName = "arrow-left-right" })
 
-registerUI(TraitGroup:AddToggle("AutoTrait", {
-    Text = "Auto Roll Trait",
-    Default = Config.AutoTrait or false,
-    Tooltip = "Otomatis reroll trait unit menggunakan Gems",
+local function getTradePlayerList()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            table.insert(list, p.Name)
+        end
+    end
+    table.sort(list)
+    if #list == 0 then table.insert(list, "No Players") end
+    return list
+end
+
+registerUI(TradeGroup:AddDropdown("TradeTargetPlayer", {
+    Values = getTradePlayerList(),
+    Default = (Config.TradeTargetPlayer and Config.TradeTargetPlayer ~= "") and Config.TradeTargetPlayer or "",
+    Multi = false,
+    Text = "Select Player",
+    Tooltip = "Select target player in server to trade with",
     Callback = function(Value)
-        Config.AutoTrait = Value
+        Config.TradeTargetPlayer = Value
         triggerAutoSave()
     end,
-}), "Auto Roll Trait", "Auto Roll Trait")
+}), "Pilih Player", "Select Player")
 
-registerUI(TraitGroup:AddToggle("AutoGrade", {
-    Text = "Auto Upgrade Grade",
-    Default = Config.AutoGrade or false,
-    Tooltip = "Otomatis upgrade grade unit menggunakan Gems",
+registerUI(TradeGroup:AddButton({
+    Text = "Send Request Trade",
+    Func = function()
+        local targetName = Config.TradeTargetPlayer
+        if not targetName or targetName == "" or targetName == "No Players" then
+            Library:Notify({
+                Title = "ZetroX Hub",
+                Description = "Please select a player first!",
+                Time = 3,
+            })
+            return
+        end
+        local targetPlr = Players:FindFirstChild(targetName)
+        if not targetPlr then
+            Library:Notify({
+                Title = "ZetroX Hub",
+                Description = "Player not found in server!",
+                Time = 3,
+            })
+            return
+        end
+
+        local reqRem = Remotes.RequestTrade
+        if not reqRem then
+            local rep = game:GetService("ReplicatedStorage")
+            local net = rep:FindFirstChild("Network")
+            local ts = net and net:FindFirstChild("TradeService")
+            reqRem = ts and ts:FindFirstChild("RE") and ts.RE:FindFirstChild("RequestTrade")
+            if reqRem then Remotes.RequestTrade = reqRem end
+        end
+
+        if reqRem then
+            pcall(function() reqRem:FireServer(targetPlr) end)
+            Library:Notify({
+                Title = "ZetroX Hub",
+                Description = "Trade request sent to " .. targetName .. "!",
+                Time = 3,
+            })
+        else
+            Library:Notify({
+                Title = "ZetroX Hub",
+                Description = "Trade remote not found!",
+                Time = 3,
+            })
+        end
+    end,
+}), "Kirim Request Trade", "Send Request Trade")
+
+registerUI(TradeGroup:AddToggle("SpecialTrade", {
+    Text = "Special Trade Feature",
+    Default = Config.SpecialTrade or false,
+    Tooltip = "Enable custom quantity input button in trade offer menu",
     Callback = function(Value)
-        Config.AutoGrade = Value
+        Config.SpecialTrade = Value
+        triggerAutoSave()
+        Library:Notify({
+            Title = "ZetroX Hub",
+            Description = "Special Trade: " .. (Value and "ACTIVATED" or "DISABLED"),
+            Time = 2.5
+        })
+        if not Value then
+            pcall(function()
+                local pGui = player:FindFirstChild("PlayerGui")
+                if pGui then
+                    for _, desc in ipairs(pGui:GetDescendants()) do
+                        if desc.Name == "OfferCustom" then
+                            local par = desc.Parent
+                            if par and par:GetAttribute("OriginalHeight") then
+                                par.Size = UDim2.new(par.Size.X.Scale, par.Size.X.Offset, par.Size.Y.Scale, par:GetAttribute("OriginalHeight"))
+                                par:SetAttribute("OriginalHeight", nil)
+                            end
+                            desc:Destroy()
+                        end
+                    end
+                end
+            end)
+        end
+    end,
+}), "Special Trade Feature", "Special Trade Feature")
+
+-- Auto-refresh player dropdown when players join/leave
+addConnection(Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    if Options and Options.TradeTargetPlayer then
+        pcall(function() Options.TradeTargetPlayer:SetValues(getTradePlayerList()) end)
+    end
+end))
+addConnection(Players.PlayerRemoving:Connect(function()
+    task.wait(0.5)
+    if Options and Options.TradeTargetPlayer then
+        pcall(function() Options.TradeTargetPlayer:SetValues(getTradePlayerList()) end)
+    end
+end))
+
+-- UNIT SELECTION GROUP
+local UnitSelectGroup = Tabs.Tower:AddGroupbox({ Side = "Right", Name = "Select Unit", IconName = "user-check" })
+
+local initialUnitList = refreshUnitDropdownList()
+local defaultDisplay = (Config.SelectedUnitUUID and UnitUUIDMap[Config.SelectedUnitUUID]) or initialUnitList[1] or ""
+if Config.SelectedUnitUUID and Config.SelectedUnitUUID ~= "" and UnitUUIDMap[Config.SelectedUnitUUID] then
+    Config.SelectedUnitDisplay = UnitUUIDMap[Config.SelectedUnitUUID]
+elseif initialUnitList[1] and UnitDisplayMap[initialUnitList[1]] then
+    Config.SelectedUnitDisplay = initialUnitList[1]
+    Config.SelectedUnitUUID = UnitDisplayMap[initialUnitList[1]]
+end
+
+registerUI(UnitSelectGroup:AddDropdown("SelectedUnitDisplay", {
+    Values = initialUnitList,
+    Default = Config.SelectedUnitDisplay or defaultDisplay,
+    Multi = false,
+    Text = (Config.Language == "EN" and "Select Unit" or "Pilih Unit"),
+    Tooltip = "Select a unit from inventory to roll Grade or Trait",
+    Callback = function(Value)
+        Config.SelectedUnitDisplay = Value
+        local uuid = UnitDisplayMap[Value] or ""
+        Config.SelectedUnitUUID = uuid
+        updateUnitStatsDisplay()
         triggerAutoSave()
     end,
-}), "Auto Upgrade Grade", "Auto Upgrade Grade")
+}), "Pilih Unit", "Select Unit")
 
-registerUI(TraitGroup:AddInput("TargetUnitName", {
-    Default = Config.TargetUnitName or "",
-    Numeric = false,
-    Finished = true,
-    Text = (Config.Language == "EN" and "Target Unit Name" or "Nama Unit Target"),
-    Tooltip = "Ketik nama unit (misal: Luffy). Kosongkan untuk semua unit di plot!",
-    Placeholder = "Nama unit (opsional)...",
+registerUI(UnitSelectGroup:AddButton({
+    Text = (Config.Language == "EN" and "Refresh Inventory" or "Refresh Inventory"),
+    Func = function()
+        local newList = refreshUnitDropdownList()
+        if Options.SelectedUnitDisplay then
+            Options.SelectedUnitDisplay:SetValues(newList)
+            if Config.SelectedUnitUUID and UnitUUIDMap[Config.SelectedUnitUUID] then
+                Options.SelectedUnitDisplay:SetValue(UnitUUIDMap[Config.SelectedUnitUUID])
+            else
+                Options.SelectedUnitDisplay:SetValue(newList[1] or "")
+            end
+        end
+        updateUnitStatsDisplay()
+        Library:Notify({
+            Title = "ZetroX Hub",
+            Description = (Config.Language == "EN" and "Inventory refreshed!" or "Inventory berhasil di-refresh!"),
+            Time = 2
+        })
+    end,
+}), "Refresh Inventory", "Refresh Inventory")
+
+-- AUTO GRADES GROUP
+local GradeGroup = Tabs.Tower:AddGroupbox({ Side = "Right", Name = "Auto Grades", IconName = "sparkles" })
+
+GradeStatusLabel = GradeGroup:AddLabel(Config.Language == "EN" and "Current Grade: -" or "Grade Saat Ini: -")
+
+registerUI(GradeGroup:AddDropdown("TargetGrades", {
+    Values = GRADE_TIERS_LIST,
+    Default = Config.TargetGrades or { ["神"] = true, ["Z+"] = true, ["Z"] = true, ["S+"] = true, ["S"] = true },
+    Multi = true,
+    Text = "Target Grades",
+    Tooltip = "Select target grades to stop rolling at",
     Callback = function(Value)
-        Config.TargetUnitName = Value
+        Config.TargetGrades = Value
+        pcall(syncServerGradeProtections)
         triggerAutoSave()
     end,
-}), "Nama Unit Target", "Target Unit Name")
+}), "Target Grades", "Target Grades")
+
+registerUI(GradeGroup:AddToggle("AutoRollGrades", {
+    Text = "Auto Roll Grades",
+    Default = Config.AutoRollGrades or false,
+    Tooltip = "Automatically roll unit grade using Gems until target grade is reached",
+    Callback = function(Value)
+        Config.AutoRollGrades = Value
+        if Value then
+            pcall(syncServerGradeProtections)
+        end
+        triggerAutoSave()
+    end,
+}), "Auto Roll Grades", "Auto Roll Grades")
+
+-- AUTO TRAIT GROUP
+local TraitGroup = Tabs.Tower:AddGroupbox({ Side = "Right", Name = "Auto Traits", IconName = "zap" })
+
+TraitStatusLabel = TraitGroup:AddLabel(Config.Language == "EN" and "Current Trait: -" or "Trait Saat Ini: -")
+
+registerUI(TraitGroup:AddDropdown("TargetTraits", {
+    Values = TRAIT_LIST,
+    Default = Config.TargetTraits or { ["Eternal"] = true, ["Transcendent"] = true, ["Monarch"] = true, ["Shogun"] = true, ["Samurai"] = true },
+    Multi = true,
+    Text = "Target Traits",
+    Tooltip = "Select target traits to stop rolling at",
+    Callback = function(Value)
+        Config.TargetTraits = Value
+        pcall(syncServerTraitProtections)
+        triggerAutoSave()
+    end,
+}), "Target Traits", "Target Traits")
+
+registerUI(TraitGroup:AddToggle("AutoRollTraits", {
+    Text = "Auto Roll Traits",
+    Default = Config.AutoRollTraits or false,
+    Tooltip = "Automatically roll unit trait using Trait Rerolls until target trait is reached",
+    Callback = function(Value)
+        Config.AutoRollTraits = Value
+        if Value then
+            pcall(syncServerTraitProtections)
+        end
+        triggerAutoSave()
+    end,
+}), "Auto Roll Traits", "Auto Roll Traits")
+
+-- Sinkronisasi awal label stat unit terpilih
+task.spawn(function()
+    task.wait(1)
+    pcall(updateUnitStatsDisplay)
+end)
+
+end
 
 --------------------------------------------------------------------------------
 -- TAB 5: REWARDS & CODES
 --------------------------------------------------------------------------------
-local CodeGroup = Tabs.Quests:AddGroupbox({ Side = "Left", Name = "Promo & Gift Codes", IconName = "ticket" })
+do
+local CodeGroup = Tabs.Quests:AddGroupbox({ Side = "Left", Name = "Gift Codes", IconName = "ticket" })
 
 registerUI(CodeGroup:AddToggle("AutoClaimCodes", {
-    Text = (Config.Language == "EN" and "Auto Redeem All Promo Codes" or "Auto Redeem Semua Kode Promo"),
+    Text = (Config.Language == "EN" and "Auto Claim Codes" or "Auto Klaim Kode"),
     Default = Config.AutoClaimCodes or false,
-    Tooltip = "Otomatis redeem daftar kode hadiah aktif",
+    Tooltip = "Automatically redeem active promo codes",
     Callback = function(Value)
         Config.AutoClaimCodes = Value
         triggerAutoSave()
     end,
-}), "Auto Redeem Semua Kode Promo", "Auto Redeem All Promo Codes")
+}), "Auto Klaim Kode", "Auto Claim Codes")
 
 registerUI(CodeGroup:AddInput("SingleCodeInput", {
     Default = "",
     Numeric = false,
     Finished = true,
-    Text = (Config.Language == "EN" and "Redeem Single Code" or "Redeem Kode Tunggal"),
-    Placeholder = "Ketik kode di sini...",
-}), "Redeem Kode Tunggal", "Redeem Single Code")
+    Text = (Config.Language == "EN" and "Enter Code" or "Ketik Kode"),
+    Placeholder = "Enter code here...",
+}), "Ketik Kode", "Enter Code")
 
 registerUI(CodeGroup:AddButton({
-    Text = (Config.Language == "EN" and "Redeem This Code" or "Redeem Kode Tersebut"),
+    Text = (Config.Language == "EN" and "Redeem Code" or "Redeem Kode"),
     Func = function()
         local code = Options.SingleCodeInput and Options.SingleCodeInput.Value
         if code and code ~= "" then
@@ -4263,10 +5033,10 @@ registerUI(CodeGroup:AddButton({
             })
         end
     end,
-}), "Redeem Kode Tersebut", "Redeem This Code")
+}), "Redeem Kode", "Redeem Code")
 
 registerUI(CodeGroup:AddButton({
-    Text = (Config.Language == "EN" and "Redeem All Active Codes" or "Redeem Semua Kode Aktif"),
+    Text = (Config.Language == "EN" and "Redeem All Codes" or "Redeem Semua Kode"),
     Func = function()
         task.spawn(function()
             claimAllCodes()
@@ -4277,22 +5047,22 @@ registerUI(CodeGroup:AddButton({
             })
         end)
     end,
-}), "Redeem Semua Kode Aktif", "Redeem All Active Codes")
+}), "Redeem Semua Kode", "Redeem All Codes")
 
-local QuestGroup = Tabs.Quests:AddGroupbox({ Side = "Right", Name = "Quests & Daily Rewards", IconName = "award" })
+local QuestGroup = Tabs.Quests:AddGroupbox({ Side = "Right", Name = "Quests & Shop", IconName = "award" })
 
 registerUI(QuestGroup:AddToggle("AutoClaimQuests", {
-    Text = (Config.Language == "EN" and "Auto Claim Quests (Daily & Weekly)" or "Auto Klaim Quest (Harian & Mingguan)"),
+    Text = (Config.Language == "EN" and "Auto Claim Quests" or "Auto Klaim Quest"),
     Default = Config.AutoClaimQuests or false,
-    Tooltip = "Klaim reward quest otomatis saat selesai",
+    Tooltip = "Automatically claim completed quests",
     Callback = function(Value)
         Config.AutoClaimQuests = Value
         triggerAutoSave()
     end,
-}), "Auto Klaim Quest (Harian & Mingguan)", "Auto Claim Quests (Daily & Weekly)")
+}), "Auto Klaim Quest", "Auto Claim Quests")
 
 registerUI(QuestGroup:AddSlider("ClaimQuestsDelay", {
-    Text = (Config.Language == "EN" and "Quest Check Delay" or "Jeda Cek Quest"),
+    Text = (Config.Language == "EN" and "Claim Interval" or "Interval Klaim"),
     Default = Config.ClaimQuestsDelay or 15,
     Min = 5,
     Max = 60,
@@ -4302,20 +5072,20 @@ registerUI(QuestGroup:AddSlider("ClaimQuestsDelay", {
         Config.ClaimQuestsDelay = Value
         triggerAutoSave()
     end,
-}), "Jeda Cek Quest", "Quest Check Delay")
+}), "Interval Klaim", "Claim Interval")
 
 registerUI(QuestGroup:AddToggle("AutoBuyQuestShop", {
-    Text = (Config.Language == "EN" and "Auto Buy Quest Shop (Lucky Spin)" or "Beli Toko Quest (Lucky Spin)"),
+    Text = (Config.Language == "EN" and "Auto Buy Quest Shop" or "Auto Beli Quest Shop"),
     Default = Config.AutoBuyQuestShop or false,
-    Tooltip = "Beli Lucky Spin otomatis jika memiliki Quest Tickets",
+    Tooltip = "Automatically buy Lucky Spin from Quest Shop",
     Callback = function(Value)
         Config.AutoBuyQuestShop = Value
         triggerAutoSave()
     end,
-}), "Beli Toko Quest (Lucky Spin)", "Auto Buy Quest Shop (Lucky Spin)")
+}), "Auto Beli Quest Shop", "Auto Buy Quest Shop")
 
 registerUI(QuestGroup:AddButton({
-    Text = (Config.Language == "EN" and "Claim Daily & Offline Rewards" or "Klaim Hadiah Harian & Offline"),
+    Text = (Config.Language == "EN" and "Claim All Rewards" or "Klaim Semua Hadiah"),
     Func = function()
         task.spawn(function()
             safeCallRemote(Remotes.ClaimDaily)
@@ -4324,20 +5094,20 @@ registerUI(QuestGroup:AddButton({
             claimAllQuests()
             Library:Notify({
                 Title = "ZetroX Hub",
-                Description = (Config.Language == "EN" and "Daily, offline & quest rewards claimed!" or "Klaim reward harian, offline & quest selesai!"),
+                Description = (Config.Language == "EN" and "All available rewards claimed!" or "Semua hadiah berhasil di-klaim!"),
                 Time = 3
             })
         end)
     end,
-}), "Klaim Hadiah Harian & Offline", "Claim Daily & Offline Rewards")
+}), "Klaim Semua Hadiah", "Claim All Rewards")
 
 --------------------------------------------------------------------------------
 -- TAB 6: PLAYER & MISC
 --------------------------------------------------------------------------------
-local MoveGroup = Tabs.Player:AddGroupbox({ Side = "Left", Name = "Character Movement", IconName = "activity" })
+local MoveGroup = Tabs.Player:AddGroupbox({ Side = "Left", Name = "Movement", IconName = "activity" })
 
 registerUI(MoveGroup:AddSlider("WalkSpeedSlider", {
-    Text = (Config.Language == "EN" and "WalkSpeed" or "Kecepatan Jalan (WalkSpeed)"),
+    Text = "WalkSpeed",
     Default = 16,
     Min = 16,
     Max = 250,
@@ -4348,10 +5118,10 @@ registerUI(MoveGroup:AddSlider("WalkSpeedSlider", {
             char.Humanoid.WalkSpeed = Value
         end
     end,
-}), "Kecepatan Jalan (WalkSpeed)", "WalkSpeed")
+}), "WalkSpeed", "WalkSpeed")
 
 registerUI(MoveGroup:AddSlider("JumpPowerSlider", {
-    Text = (Config.Language == "EN" and "JumpPower" or "Tinggi Lompatan (JumpPower)"),
+    Text = "JumpPower",
     Default = 50,
     Min = 50,
     Max = 350,
@@ -4363,7 +5133,7 @@ registerUI(MoveGroup:AddSlider("JumpPowerSlider", {
             char.Humanoid.JumpPower = Value
         end
     end,
-}), "Tinggi Lompatan (JumpPower)", "JumpPower")
+}), "JumpPower", "JumpPower")
 
 registerUI(MoveGroup:AddToggle("InfiniteJumpToggle", {
     Text = (Config.Language == "EN" and "Infinite Jump" or "Lompatan Tanpa Batas"),
@@ -4371,22 +5141,25 @@ registerUI(MoveGroup:AddToggle("InfiniteJumpToggle", {
     Callback = function(Value) _G.ZetroX_InfJump = Value end,
 }), "Lompatan Tanpa Batas", "Infinite Jump")
 
-UserInputService.JumpRequest:Connect(function()
+addConnection(UserInputService.JumpRequest:Connect(function()
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     if _G.ZetroX_InfJump then
         local char = player.Character
         if char and char:FindFirstChildOfClass("Humanoid") then
             char:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
         end
     end
-end)
+end))
 
 registerUI(MoveGroup:AddToggle("NoclipToggle", {
-    Text = (Config.Language == "EN" and "Noclip (Walk Through Walls)" or "Tembus Tembok (Noclip)"),
+    Text = (Config.Language == "EN" and "Noclip" or "Noclip (Tembus Tembok)"),
     Default = false,
+    Tooltip = "Walk through walls",
     Callback = function(Value) _G.ZetroX_Noclip = Value end,
-}), "Tembus Tembok (Noclip)", "Noclip (Walk Through Walls)")
+}), "Noclip (Tembus Tembok)", "Noclip")
 
-RunService.Stepped:Connect(function()
+addConnection(RunService.Stepped:Connect(function()
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     if _G.ZetroX_Noclip then
         local char = player.Character
         if char then
@@ -4397,7 +5170,7 @@ RunService.Stepped:Connect(function()
             end
         end
     end
-end)
+end))
 
 registerUI(MoveGroup:AddButton({
     Text = (Config.Language == "EN" and "Reset Speed & Jump" or "Reset Kecepatan & Lompatan"),
@@ -4412,10 +5185,10 @@ registerUI(MoveGroup:AddButton({
     end,
 }), "Reset Kecepatan & Lompatan", "Reset Speed & Jump")
 
-local PerfGroup = Tabs.Player:AddGroupbox({ Side = "Right", Name = "Performance & Optimization", IconName = "gauge" })
+local PerfGroup = Tabs.Player:AddGroupbox({ Side = "Right", Name = "Performance", IconName = "gauge" })
 
 registerUI(PerfGroup:AddSlider("FPSCapSlider", {
-    Text = (Config.Language == "EN" and "FPS Cap Limit" or "Batas Maksimal FPS"),
+    Text = (Config.Language == "EN" and "FPS Cap" or "Batas Maksimal FPS"),
     Default = Config.FPSCap or 60,
     Min = 10,
     Max = 240,
@@ -4426,21 +5199,21 @@ registerUI(PerfGroup:AddSlider("FPSCapSlider", {
         applyFPSCap(Value)
         triggerAutoSave()
     end,
-}), "Batas Maksimal FPS", "FPS Cap Limit")
+}), "Batas Maksimal FPS", "FPS Cap")
 
 registerUI(PerfGroup:AddToggle("Disable3D", {
-    Text = (Config.Language == "EN" and "Disable 3D Rendering (Ultra Potato)" or "Matikan Rendering 3D (Ultra Potato)"),
+    Text = (Config.Language == "EN" and "Disable 3D Rendering" or "Matikan Rendering 3D"),
     Default = Config.Disable3D or false,
-    Tooltip = "Matikan 3D render agar hemat CPU & GPU saat AFK (TIDAK aktif otomatis)",
+    Tooltip = "Disables 3D rendering to reduce CPU and GPU usage during AFK",
     Callback = function(Value)
         Config.Disable3D = Value
         set3DRendering(not Value)
         triggerAutoSave()
     end,
-}), "Matikan Rendering 3D (Ultra Potato)", "Disable 3D Rendering (Ultra Potato)")
+}), "Matikan Rendering 3D", "Disable 3D Rendering")
 
 registerUI(PerfGroup:AddButton({
-    Text = (Config.Language == "EN" and "Clean 3D Visual Effects (Anti-Lag)" or "Bersihkan Efek Visual 3D (Anti-Lag)"),
+    Text = (Config.Language == "EN" and "Remove Visual Effects" or "Bersihkan Efek Visual"),
     Func = function()
         pcall(gacorOptimize)
         pcall(function()
@@ -4454,30 +5227,33 @@ registerUI(PerfGroup:AddButton({
         end)
         Library:Notify({
             Title = "ZetroX Hub",
-            Description = (Config.Language == "EN" and "Visual effects & 3D particles cleaned!" or "Efek visual & partikel 3D dibersihkan!"),
+            Description = (Config.Language == "EN" and "Visual effects removed!" or "Efek visual dibersihkan!"),
             Time = 3
         })
     end,
-}), "Bersihkan Efek Visual 3D (Anti-Lag)", "Clean 3D Visual Effects (Anti-Lag)")
+}), "Bersihkan Efek Visual", "Remove Visual Effects")
+
+end
 
 --------------------------------------------------------------------------------
 -- TAB 7: COMMUNITY
 --------------------------------------------------------------------------------
+do
 local DiscordGroup = Tabs.Discord:AddGroupbox({ Side = "Left", Name = "Official Community", IconName = "message-circle" })
-DiscordGroup:AddLabel("Official Invite: discord.gg/DQ7vRxPN3C")
-DiscordGroup:AddLabel("Dapatkan update script ZetroX Hub & support!")
+DiscordGroup:AddLabel("Discord: discord.gg/DQ7vRxPN3C")
+DiscordGroup:AddLabel("Get script updates and support!")
 DiscordGroup:AddDivider()
 
 registerUI(DiscordGroup:AddButton({
-    Text = (Config.Language == "EN" and "Copy Discord Link" or "Salin Link Discord"),
+    Text = (Config.Language == "EN" and "Copy Discord Invite" or "Salin Link Discord"),
     Func = function()
         copyToClipboard(DISCORD_INVITE)
         Library:Notify({ Title = "Discord Link", Description = "discord.gg/DQ7vRxPN3C copied!", Time = 4 })
     end,
-}), "Salin Link Discord", "Copy Discord Link")
+}), "Salin Link Discord", "Copy Discord Invite")
 
 registerUI(DiscordGroup:AddButton({
-    Text = (Config.Language == "EN" and "Open Discord App Directly (RPC)" or "Buka Prompt Discord Langsung (RPC)"),
+    Text = (Config.Language == "EN" and "Open Discord (RPC)" or "Buka Discord (RPC)"),
     Func = function()
         local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
         if req then
@@ -4497,95 +5273,62 @@ registerUI(DiscordGroup:AddButton({
             Library:Notify({ Title = "Discord Link", Description = "Link copied to clipboard.", Time = 4 })
         end
     end,
-}), "Buka Prompt Discord Langsung (RPC)", "Open Discord App Directly (RPC)")
+}), "Buka Discord (RPC)", "Open Discord (RPC)")
 
---------------------------------------------------------------------------------
--- TAB 8: SETTINGS & LANGUAGE SELECTOR
---------------------------------------------------------------------------------
-local CustomSettingsGroup = Tabs["UI Settings"]:AddGroupbox({ Side = "Left", Name = "Language & Config System", IconName = "globe" })
-
-local function setLanguage(lang)
-    Config.Language = lang
-    local isEN = (lang == "EN")
-    for _, item in ipairs(UI_ELEMENTS) do
-        if item.element and item.element.SetText then
-            pcall(function()
-                item.element:SetText(isEN and item.en or item.id)
-            end)
-        end
-    end
-    pcall(updateDiceStatusLabel)
-    triggerAutoSave()
-    Library:Notify({
-        Title = isEN and "Language Updated" or "Bahasa Diperbarui",
-        Description = isEN and "UI language switched to English!" or "Bahasa antarmuka diubah ke Bahasa Indonesia!",
-        Time = 3,
-    })
 end
 
-local isLangInitializing = true
-CustomSettingsGroup:AddDropdown("LanguageSelect", {
-    Values = { "Bahasa Indonesia", "English" },
-    Default = (Config.Language == "EN" and "English" or "Bahasa Indonesia"),
-    Multi = false,
-    Text = "Pilih Bahasa / Language",
-    Tooltip = "Pilih bahasa antarmuka ZetroX Hub / Choose UI language",
-    Callback = function(Value)
-        if isLangInitializing then return end
-        local langCode = (Value == "English" and "EN" or "ID")
-        setLanguage(langCode)
-    end,
-})
-isLangInitializing = false
+--------------------------------------------------------------------------------
+-- TAB 8: SETTINGS & CONFIG
+--------------------------------------------------------------------------------
+do
+    local CustomSettingsGroup = Tabs["UI Settings"]:AddGroupbox({ Side = "Left", Name = "Settings", IconName = "settings" })
 
-registerUI(CustomSettingsGroup:AddToggle("AutoSaveConfigToggle", {
-    Text = (Config.Language == "EN" and "Auto Save Config" or "Otomatis Simpan Konfigurasi"),
-    Default = Config.AutoSaveEnabled ~= false,
-    Tooltip = "Otomatis menyimpan setiap opsi/toggle yang diubah ke memori lokal",
-    Callback = function(Value)
-        Config.AutoSaveEnabled = Value
-        triggerAutoSave()
-    end,
-}), "Otomatis Simpan Konfigurasi", "Auto Save Config")
+    registerUI(CustomSettingsGroup:AddToggle("AutoSaveConfigToggle", {
+        Text = (Config.Language == "EN" and "Auto Save Config" or "Otomatis Simpan Konfigurasi"),
+        Default = Config.AutoSaveEnabled ~= false,
+        Tooltip = "Automatically save config changes to local storage",
+        Callback = function(Value)
+            Config.AutoSaveEnabled = Value
+            triggerAutoSave()
+        end,
+    }), "Otomatis Simpan Konfigurasi", "Auto Save Config")
 
-registerUI(CustomSettingsGroup:AddButton({
-    Text = (Config.Language == "EN" and "Save Config Now" or "Simpan Konfigurasi Sekarang"),
-    Func = function()
-        triggerAutoSave()
-        Library:Notify({
-            Title = "ZetroX Hub",
-            Description = (Config.Language == "EN" and "Configuration saved successfully!" or "Konfigurasi berhasil disimpan!"),
-            Time = 3
-        })
-    end,
-}), "Simpan Konfigurasi Sekarang", "Save Config Now")
+    registerUI(CustomSettingsGroup:AddButton({
+        Text = (Config.Language == "EN" and "Save Config" or "Simpan Konfigurasi"),
+        Func = function()
+            triggerAutoSave()
+            Library:Notify({
+                Title = "ZetroX Hub",
+                Description = (Config.Language == "EN" and "Configuration saved successfully!" or "Konfigurasi berhasil disimpan!"),
+                Time = 3
+            })
+        end,
+    }), "Simpan Konfigurasi", "Save Config")
 
-CustomSettingsGroup:AddDivider()
+    CustomSettingsGroup:AddDivider()
 
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
+    ThemeManager:SetLibrary(Library)
+    SaveManager:SetLibrary(Library)
 
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({ "MenuKeybind", "LanguageSelect" })
-ThemeManager:SetFolder("ZetroXHub")
-SaveManager:SetFolder("ZetroXHub/configs")
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+    ThemeManager:SetFolder("ZetroXHub")
+    SaveManager:SetFolder("ZetroXHub/configs")
 
-SaveManager:BuildConfigSection(Tabs["UI Settings"])
-ThemeManager:ApplyToTab(Tabs["UI Settings"])
+    SaveManager:BuildConfigSection(Tabs["UI Settings"])
+    ThemeManager:ApplyToTab(Tabs["UI Settings"])
 
-pcall(function() ThemeManager:ApplyTheme("Default") end)
-pcall(function() SaveManager:LoadAutoloadConfig() end)
-
--- Terapkan Bahasa Tersimpan saat Startup
-pcall(function()
-    if Config.Language == "EN" then
-        setLanguage("EN")
-    end
-end)
+    pcall(function() ThemeManager:ApplyTheme("Default") end)
+    pcall(function() SaveManager:LoadAutoloadConfig() end)
+    pcall(function()
+        syncServerGradeProtections()
+        syncServerTraitProtections()
+    end)
+end
 
 Library:Notify({
-    Title = "ZetroX Hub Loaded!",
-    Description = "ZetroX Hub siap digunakan. Tekan RightControl atau tombol [-] / [X] untuk toggle.",
+    Title = "ZetroX Hub",
+    Description = "Loaded successfully! Press RightControl or floating icon to toggle.",
     Time = 4,
 })
 -- =============================================================================
@@ -4595,6 +5338,7 @@ Library:Notify({
 -- 1. Roll Loop (Lobby)
 task.spawn(function()
     while task.wait(Config.RollDelay or 0.2) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if not Config.AutoTowerRoll then 
             currentKaitunStatus = Config.AutoRebirth and "🟢 Farming & Rebirth" or "🟢 Farming Normal" 
         end
@@ -4607,10 +5351,12 @@ end)
 -- 2. Equip Best Units Loop (Prioritaskan Rarity/Chance Tertinggi)
 task.spawn(function()
     task.wait(2)
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     -- Jalankan auto equip best rarity saat awal inject
     pcall(autoEquipBestRarityUnits)
 
     while task.wait(Config.EquipBestDelay or 5) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoEquipBest then
             pcall(autoEquipBestRarityUnits)
         end
@@ -4620,6 +5366,7 @@ end)
 -- 3. Auto Claim Plot Cash Loop (CollectBalance + Pad Hijau)
 task.spawn(function()
     while task.wait(Config.ClaimPlotDelay) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoClaimPlot then
             claimPlotCash()
         end
@@ -4629,11 +5376,13 @@ end)
 -- 4. Auto Redeem Gift Codes Loop (MonetizationService)
 task.spawn(function()
     task.wait(3)
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     if Config.AutoClaimCodes then
         pcall(claimAllCodes)
     end
 
     while task.wait(300) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoClaimCodes then
             pcall(claimAllCodes)
         end
@@ -4644,9 +5393,11 @@ end)
 task.spawn(function()
     -- Sync langsung di awal startup
     task.wait(1.5)
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     pcall(syncEquippedDiceAndThreshold)
     
     while task.wait(8) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoSellThreshold and Config.AutoSyncThresholdWithDice then
             pcall(syncEquippedDiceAndThreshold)
         end
@@ -4656,6 +5407,7 @@ end)
 -- ULTRA POTATO RAM PURGE THREAD (Mencegah Memory Leak Luau & RAM 5GB)
 task.spawn(function()
     while task.wait(20) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         pcall(function()
             collectgarbage("collect")
         end)
@@ -4665,6 +5417,7 @@ end)
 -- 5. AUTO REBIRTH LOOP (DIPRIORITASKAN SEBELUM PLAYER STATS)
 task.spawn(function()
     while task.wait(Config.RebirthDelay or 5) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoRebirth and Remotes.Rebirth then
             pcall(function() Remotes.Rebirth:FireServer() end)
         end
@@ -4674,10 +5427,12 @@ end)
 -- 6. PROGRESSIVE AUTO BUY DICE & AUTO EQUIP BEST LOOP
 task.spawn(function()
     task.wait(1)
+    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then return end
     pcall(autoEquipBestDice)
     pcall(updateDiceStatusLabel)
 
     while task.wait(Config.BuyDiceDelay or 2) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoEquipBestDice then
             pcall(autoEquipBestDice)
         end
@@ -4688,28 +5443,63 @@ task.spawn(function()
     end
 end)
 
--- 7. Auto Potion Loop (BoostService.RE.Use) - Gacor All Potions
+-- 7. Auto Potion Loop (BoostService.RE.Use) - Smart Scan & Rotation System
 task.spawn(function()
     task.wait(2)
-    while task.wait(Config.PotionDelay or 5) do
+    while isScriptRunning and getgenv().CURRENT_ZETROX_INSTANCE == SCRIPT_INSTANCE_ID do
+        local delaySeconds = tonumber(Config.PotionDelay) or 5
+        if delaySeconds < 1 then delaySeconds = 1 end
+
         if Config.AutoUsePotion then
             local rem = getUsePotionRemote()
             if rem then
-                for potName, on in pairs(Config.PotionList) do
-                    if on then
-                        pcall(function() rem:FireServer(potName) end)
-                        task.wait(0.12)
+                -- 1. Ambil tier target yang dipilih (misal: "Tier II" -> 2)
+                local rawTier = Config.SelectedPotionTier or "Tier I"
+                local romanTier = rawTier:gsub("Tier%s*", ""):gsub("%s+", "")
+                local targetTierNum = ROMAN_TO_INT_MAP[romanTier] or tonumber(romanTier) or 1
+
+                -- 2. Scan inventory untuk mendeteksi semua potion yang benar-benar dimiliki pemain saat ini
+                local ownedPotions = scanOwnedPotions()
+
+                -- 3. Filter potion yang sesuai dengan Tier & Kategori Boost yang dipilih user
+                local potionsToDrink = {}
+                for potName, amt in pairs(ownedPotions) do
+                    if amt > 0 then
+                        local potData = resolvePotionData(potName)
+                        if potData and potData.tier == targetTierNum then
+                            if Config.SelectedBoosts and Config.SelectedBoosts[potData.core] == true then
+                                table.insert(potionsToDrink, potName)
+                            end
+                        end
                     end
                 end
+
+                -- 4. Eksekusi minum: jika ada potion yang cocok di inventory, minum masing-masing varian 1x pada rotasi ini
+                if #potionsToDrink > 0 then
+                    table.sort(potionsToDrink)
+                    for _, potName in ipairs(potionsToDrink) do
+                        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or not Config.AutoUsePotion then break end
+                        pcall(function()
+                            rem:FireServer(potName)
+                        end)
+                        -- Jeda sangat singkat (0.15 detik) antar varian agar request terkirim mulus
+                        task.wait(0.15)
+                    end
+                end
+                -- CATATAN ANTI-SPAM: Jika tidak ada potion yang cocok di inventory (#potionsToDrink == 0),
+                -- script HANYA melakukan scan tanpa memanggil remote Use sama sekali (0 spam).
             end
         end
+
+        -- Tunggu interval delay yang telah di-setting oleh user sebelum rotasi / scan berikutnya
+        task.wait(delaySeconds)
     end
 end)
 
 -- 8. AUTO TOWER PROGRESSION LOOP (ARCADEHUB PROVEN LOGIC)
 task.spawn(function()
     task.wait(2)
-    while true do
+    while isScriptRunning and getgenv().CURRENT_ZETROX_INSTANCE == SCRIPT_INSTANCE_ID do
         if Config.AutoTowerRoll then
             local activeIdx = tonumber(Config.CurrentTowerIdx) or 1
             if activeIdx < 1 or activeIdx > #TowerList then activeIdx = 1; Config.CurrentTowerIdx = 1 end
@@ -4721,7 +5511,7 @@ task.spawn(function()
                 if not nextIdx then
                     currentTowerTarget = nil
                     currentTowerFloor = 0
-                    currentKaitunStatus = "🛑 Semua Tower Selesai/Off"
+                    currentKaitunStatus = "🛑 All Towers Complete"
                     task.wait(3)
                     continue
                 end
@@ -4732,12 +5522,10 @@ task.spawn(function()
 
             currentTowerTarget = towerData
             currentTowerFloor = 0
-            currentKaitunStatus = string.format("🏰 Masuk %s (%s)", towerData.Name, towerData.Diff)
-            -- print(string.format("[ZionHub] 🏰 Memulai %s (%s)...", towerData.Name, towerData.Diff))
+            currentKaitunStatus = string.format("🏰 Entering %s (%s)", towerData.Name, towerData.Diff)
 
             local started = launchTower(towerData)
             if not started then
-                -- print(string.format("[ZionHub] ⚠️ Gagal masuk %s, coba lagi dalam 3 detik...", towerData.Name))
                 task.wait(3)
                 continue
             end
@@ -4748,14 +5536,13 @@ task.spawn(function()
             local TIMEOUT = 90
             local maxFloor = (towerData.Name == "Infinity Tower" and 200) or 100
 
-            while Config.AutoTowerRoll do
+            while Config.AutoTowerRoll and isScriptRunning and getgenv().CURRENT_ZETROX_INSTANCE == SCRIPT_INSTANCE_ID do
                 task.wait(1)
 
                 -- Cek kondisi character mati
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 if hum and hum.Health <= 0 then
-                    -- print(string.format("[ZionHub] 💀 Karakter mati di tower %s.", towerData.Name))
                     break
                 end
 
@@ -4784,7 +5571,6 @@ task.spawn(function()
 
                 -- Cek apakah sudah mencapai max floor
                 if currentTowerFloor >= maxFloor then
-                    -- print(string.format("[ZionHub] 🏁 %s selesai! Mencapai Floor %d", towerData.Name, maxFloor))
                     break
                 end
 
@@ -4799,13 +5585,11 @@ task.spawn(function()
                 end)
 
                 if isRewardsOpen then
-                    -- print(string.format("[ZionHub] 🎁 Reward menu muncul! %s selesai.", towerData.Name))
                     break
                 end
 
                 -- Watchdog: jika macet tanpa kenaikan floor selama TIMEOUT detik
                 if noProgress >= TIMEOUT then
-                    -- print(string.format("[ZionHub] ⚠️ Watchdog timeout di tower %s, membatalkan...", towerData.Name))
                     if Remotes.CancelTower then
                         pcall(function() Remotes.CancelTower:InvokeServer() end)
                     end
@@ -4819,9 +5603,9 @@ task.spawn(function()
             end
 
             -- Tunggu reward ditutup (maksimal 15 detik)
-            currentKaitunStatus = string.format("🎁 %s Selesai, Menunggu...", towerData.Name)
+            currentKaitunStatus = string.format("🎁 %s Finished, Waiting...", towerData.Name)
             local rewWait = 0
-            while rewWait < 15 do
+            while rewWait < 15 and isScriptRunning and getgenv().CURRENT_ZETROX_INSTANCE == SCRIPT_INSTANCE_ID do
                 local isOpen = false
                 pcall(function()
                     local r = player.PlayerGui:FindFirstChild("Root")
@@ -4841,7 +5625,6 @@ task.spawn(function()
                 Config.CurrentTowerIdx = nextIdx
                 local nextData = TowerList[Config.CurrentTowerIdx]
                 if nextData then
-                    -- print(string.format("[ZionHub] ⏳ Rotasi ke tower berikutnya: %s (%s)", nextData.Name, nextData.Diff))
                 end
             else
                 Config.CurrentTowerIdx = 1
@@ -4857,20 +5640,114 @@ task.spawn(function()
     end
 end)
 
--- 9. AUTO TRAIT & GRADE (GEMS) - DENGAN NAMA UNIT ATAU UUID
+-- 9. AUTO ROLL GRADES (GEMS) LOOP
 task.spawn(function()
-    while task.wait(1) do
-        if (Config.AutoTrait and Remotes.RollTrait) or (Config.AutoGrade and Remotes.RollGrade) then
-            local targets = getEquippedUnitUUIDs()
+    task.wait(2)
+    while task.wait(0.28) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
+        if Config.AutoRollGrades then
+            local uuid = Config.SelectedUnitUUID
+            if uuid and uuid ~= "" then
+                local pState = getPlayerDataState()
+                local uData = pState and pState.Inventory and pState.Inventory[uuid]
+                if uData and typeof(uData) == "table" then
+                    local curGrade = (uData.attributes and uData.attributes.grade) or uData.grade or "D"
+                    updateUnitStatsDisplay()
 
-            for _, unitId in ipairs(targets) do
-                if Config.AutoTrait and Remotes.RollTrait then
-                    pcall(function() Remotes.RollTrait:FireServer(unitId) end)
-                    task.wait(0.2)
+                    -- Cek apakah grade saat ini sudah masuk ke target incaran user
+                    if Config.TargetGrades and Config.TargetGrades[curGrade] == true then
+                        Config.AutoRollGrades = false
+                        if Toggles.AutoRollGrades then Toggles.AutoRollGrades:SetValue(false) end
+                        Library:Notify({
+                            Title = "ZetroX Hub",
+                            Description = (Config.Language == "EN" and "Target Grade reached: " or "Target Grade tercapai: ") .. curGrade .. "!",
+                            Time = 5
+                        })
+                        triggerAutoSave()
+                    else
+                        -- Cek ketersediaan Gems (1 Gem per roll)
+                        local inv = pState.Inventory
+                        local gems = 0
+                        if inv and typeof(inv) == "table" then
+                            if inv["Gems"] then
+                                gems = (typeof(inv["Gems"]) == "table" and inv["Gems"].amount) or tonumber(inv["Gems"]) or 0
+                            end
+                        end
+
+                        if gems >= 1 then
+                            local rem = getRollGradeRemote()
+                            if rem then
+                                pcall(function() rem:FireServer(uuid, false) end)
+                            end
+                        else
+                            Config.AutoRollGrades = false
+                            if Toggles.AutoRollGrades then Toggles.AutoRollGrades:SetValue(false) end
+                            Library:Notify({
+                                Title = "ZetroX Hub",
+                                Description = (Config.Language == "EN" and "Out of Gems! Auto Grade stopped." or "Gems habis! Auto Grade dihentikan."),
+                                Time = 4
+                            })
+                            triggerAutoSave()
+                        end
+                    end
                 end
-                if Config.AutoGrade and Remotes.RollGrade then
-                    pcall(function() Remotes.RollGrade:FireServer(unitId) end)
-                    task.wait(0.2)
+            end
+        end
+    end
+end)
+
+-- 9.1 AUTO ROLL TRAITS (TRAIT REROLL) LOOP
+task.spawn(function()
+    task.wait(2)
+    while task.wait(0.28) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
+        if Config.AutoRollTraits then
+            local uuid = Config.SelectedUnitUUID
+            if uuid and uuid ~= "" then
+                local pState = getPlayerDataState()
+                local uData = pState and pState.Inventory and pState.Inventory[uuid]
+                if uData and typeof(uData) == "table" then
+                    local curTrait = (uData.attributes and uData.attributes.trait) or uData.trait or "None"
+                    updateUnitStatsDisplay()
+
+                    -- Cek apakah trait saat ini sudah masuk ke target incaran user
+                    if Config.TargetTraits and Config.TargetTraits[curTrait] == true then
+                        Config.AutoRollTraits = false
+                        if Toggles.AutoRollTraits then Toggles.AutoRollTraits:SetValue(false) end
+                        Library:Notify({
+                            Title = "ZetroX Hub",
+                            Description = (Config.Language == "EN" and "Target Trait reached: " or "Target Trait tercapai: ") .. curTrait .. "!",
+                            Time = 5
+                        })
+                        triggerAutoSave()
+                    else
+                        -- Cek ketersediaan item Trait Reroll (1 Reroll per roll)
+                        local inv = pState.Inventory
+                        local rerolls = 0
+                        if inv and typeof(inv) == "table" then
+                            if inv["Trait Reroll"] then
+                                rerolls = (typeof(inv["Trait Reroll"]) == "table" and inv["Trait Reroll"].amount) or tonumber(inv["Trait Reroll"]) or 0
+                            elseif inv["Trait"] then
+                                rerolls = (typeof(inv["Trait"]) == "table" and inv["Trait"].amount) or tonumber(inv["Trait"]) or 0
+                            end
+                        end
+
+                        if rerolls >= 1 then
+                            local rem = getRollTraitRemote()
+                            if rem then
+                                pcall(function() rem:FireServer(uuid, false) end)
+                            end
+                        else
+                            Config.AutoRollTraits = false
+                            if Toggles.AutoRollTraits then Toggles.AutoRollTraits:SetValue(false) end
+                            Library:Notify({
+                                Title = "ZetroX Hub",
+                                Description = (Config.Language == "EN" and "Out of Trait Rerolls! Auto Trait stopped." or "Trait Reroll habis! Auto Trait dihentikan."),
+                                Time = 4
+                            })
+                            triggerAutoSave()
+                        end
+                    end
                 end
             end
         end
@@ -4880,6 +5757,7 @@ end)
 -- Loop Auto Sell Bag Units Below Threshold (Equip -> SellEquipped -> EquipBest)
 task.spawn(function()
     while task.wait(Config.SellInventoryDelay or 25) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoSellInventory then
             pcall(autoSellBagUnitsBelowThreshold)
         end
@@ -4889,13 +5767,14 @@ end)
 -- 10. Level Up Unit Slots (Lantai 1 & Lantai 2) Loop dengan Batas MaxUnitLevel
 task.spawn(function()
     while task.wait(Config.UpgradeUnitDelay or 15) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoUpgradeUnits and Remotes.LevelUpSlot then
             local maxSlots = math.max(6, tonumber(Config.MaxPlotSlots) or 30)
             local maxLvl = tonumber(Config.MaxUnitLevel) or 40
             local pState = getPlayerDataState()
 
             for slot = 1, maxSlots do
-                if not Config.AutoUpgradeUnits then break end
+                if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or not Config.AutoUpgradeUnits then break end
 
                 -- 1. Jika slot kosong (tidak ada unit terpasang), lewati slot ini
                 if pState and pState.Slots then
@@ -4925,6 +5804,7 @@ task.spawn(function()
     task.wait(6)
     local lastShopBuy = 0
     while task.wait(Config.ClaimQuestsDelay or 15) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         -- 1. Auto Claim Quests
         if Config.AutoClaimQuests then
             pcall(claimAllQuests)
@@ -4935,6 +5815,7 @@ task.spawn(function()
             if (os.time() - lastShopBuy) >= (Config.QuestShopBuyDelay or 30) then
                 lastShopBuy = os.time()
                 for itemName, enabled in pairs(Config.QuestShopItems or {}) do
+                    if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or not Config.AutoBuyQuestShop then break end
                     if enabled and typeof(itemName) == "string" and itemName ~= "" then
                         pcall(function() Remotes.BuyQuestItem:FireServer(itemName) end)
                         task.wait(0.3)
@@ -4948,16 +5829,17 @@ end)
 -- 11. FULL PLAYER STATS SKILL TREE AUTO-UPGRADE LOOP (DIJALANKAN PALING BELAKANG)
 task.spawn(function()
     while task.wait(Config.UpgradePlayerStatsDelay or 10) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.AutoUpgradePlayerStats and Remotes.BuyUpgrade then
             for _, statName in ipairs(ALL_SKILL_TREE_STATS) do
-                if not Config.AutoUpgradePlayerStats then break end
+                if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or not Config.AutoUpgradePlayerStats then break end
                 pcall(function() Remotes.BuyUpgrade:FireServer(statName) end)
                 task.wait(0.04)
             end
 
             local dynNodes = getDynamicSkillNodes()
             for _, dNode in ipairs(dynNodes) do
-                if not Config.AutoUpgradePlayerStats then break end
+                if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID or not Config.AutoUpgradePlayerStats then break end
                 pcall(function() Remotes.BuyUpgrade:FireServer(dNode) end)
                 task.wait(0.04)
             end
@@ -4968,6 +5850,7 @@ end)
 -- 12. Persistent 3D Render State & AFK Handler (HANYA AKTIF JIKA USER MENYALAKAN TOGGLE DI GUI)
 task.spawn(function()
     while task.wait(1) do
+        if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
         if Config.Disable3D == true then
             pcall(function()
                 RunService:Set3dRenderingEnabled(false)
@@ -4979,6 +5862,264 @@ task.spawn(function()
         end
     end
 end)
+
+-- 13. SPECIAL TRADE INJECTOR (CUSTOM QUANTITY BUTTON FOR TRADE MENU)
+--------------------------------------------------------------------------------
+do
+    local function getOfferItemName(btn1k, container)
+        local detectedName = nil
+
+        -- Method 1: Check upvalues from button Activated connections
+        local clickBtn = (btn1k:IsA("GuiButton") and btn1k) or btn1k:FindFirstChildWhichIsA("GuiButton", true)
+        if clickBtn and getconnections and getupvalues then
+            pcall(function()
+                for _, conn in ipairs(getconnections(clickBtn.Activated)) do
+                    if conn.Function then
+                        local uvs = getupvalues(conn.Function)
+                        for _, uv in pairs(uvs) do
+                            if typeof(uv) == "string" and uv ~= "" and uv ~= "Offer 1k" and uv ~= "Offer" and not uv:find("Offer") then
+                                detectedName = uv
+                                break
+                            elseif typeof(uv) == "table" then
+                                for k, v in pairs(uv) do
+                                    if typeof(v) == "string" and (k == "Name" or k == "Item" or k == "ItemName" or k == "Id") then
+                                        detectedName = v
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if detectedName then break end
+                end
+            end)
+        end
+        if detectedName then return detectedName end
+
+        -- Method 2: Check container and ancestors for item attributes or title labels
+        pcall(function()
+            local cur = container
+            for _ = 1, 5 do
+                if not cur then break end
+                local attr = cur:GetAttribute("ItemName") or cur:GetAttribute("Item") or cur:GetAttribute("Name")
+                if attr and typeof(attr) == "string" and attr ~= "" then
+                    detectedName = attr
+                    return
+                end
+                for _, desc in ipairs(cur:GetChildren()) do
+                    if (desc:IsA("TextLabel") or desc:IsA("TextBox")) and desc.Visible then
+                        local t = desc.Text
+                        if t and #t > 0 and not t:lower():find("offer") and not t:lower():find("trade") and not t:match("^%d+$") then
+                            detectedName = t
+                            return
+                        end
+                    end
+                end
+                cur = cur.Parent
+            end
+        end)
+        return detectedName
+    end
+
+    local function injectSpecialTrade(container, directChild)
+        if not container or container:FindFirstChild("OfferCustom") then return end
+
+        pcall(function()
+            local clone = directChild:Clone()
+            clone.Name = "OfferCustom"
+            if directChild.LayoutOrder then
+                clone.LayoutOrder = directChild.LayoutOrder + 1
+            end
+            clone.Visible = true
+
+            local targetLabel = nil
+            if clone:IsA("TextButton") then
+                targetLabel = clone
+                clone.Text = "Offer Custom"
+            end
+            for _, ch in ipairs(clone:GetDescendants()) do
+                if ch:IsA("TextLabel") then
+                    ch.Text = "Offer Custom"
+                    targetLabel = ch
+                end
+            end
+
+            -- Ensure parent container does not clip the new button & expand height ONCE
+            if container:IsA("GuiObject") then
+                container.ClipsDescendants = false
+                if container.Parent and container.Parent:IsA("GuiObject") then
+                    container.Parent.ClipsDescendants = false
+                end
+                if container.AutomaticSize == Enum.AutomaticSize.None then
+                    if not container:GetAttribute("OriginalHeight") then
+                        container:SetAttribute("OriginalHeight", container.Size.Y.Offset)
+                        local childH = (directChild.AbsoluteSize.Y > 0 and directChild.AbsoluteSize.Y) or 57
+                        container.Size = UDim2.new(container.Size.X.Scale, container.Size.X.Offset, container.Size.Y.Scale, container.Size.Y.Offset + childH + 10)
+                    end
+                end
+            end
+
+            clone.Parent = container
+
+            -- Setup click listener
+            local clickTarget = (clone:IsA("GuiButton") and clone) or clone:FindFirstChildWhichIsA("GuiButton", true) or clone
+            local isInputActive = false
+
+            local function startCustomInput()
+                if isInputActive or not targetLabel then return end
+                isInputActive = true
+
+                local input = Instance.new("TextBox")
+                input.Name = "CustomAmountInput"
+                input.Size = UDim2.new(0.92, 0, 0.85, 0)
+                input.Position = UDim2.new(0.5, 0, 0.5, 0)
+                input.AnchorPoint = Vector2.new(0.5, 0.5)
+                input.BackgroundTransparency = 1
+                input.Font = targetLabel.Font
+                input.TextSize = targetLabel.TextSize
+                input.TextScaled = true
+                input.TextWrapped = true
+                input.TextXAlignment = Enum.TextXAlignment.Center
+                input.TextYAlignment = Enum.TextYAlignment.Center
+                input.TextColor3 = Color3.fromRGB(255, 255, 255)
+                input.PlaceholderColor3 = Color3.fromRGB(200, 245, 200)
+                input.PlaceholderText = "Input Quantity"
+                input.Text = ""
+                input.ClearTextOnFocus = true
+                input.ZIndex = (targetLabel.ZIndex or 1) + 20
+
+                local origStroke = targetLabel:FindFirstChildWhichIsA("UIStroke")
+                if origStroke then
+                    local strokeClone = origStroke:Clone()
+                    strokeClone.Parent = input
+                else
+                    input.TextStrokeTransparency = targetLabel.TextStrokeTransparency or 0
+                    input.TextStrokeColor3 = targetLabel.TextStrokeColor3 or Color3.fromRGB(0, 0, 0)
+                end
+
+                input.Parent = targetLabel.Parent
+                targetLabel.Visible = false
+
+                task.wait(0.02)
+                input:CaptureFocus()
+
+                input.FocusLost:Connect(function(enterPressed)
+                    local entered = tonumber(input.Text)
+                    if enterPressed and entered and entered > 0 then
+                        local amount = math.floor(entered)
+                        local itemName = getOfferItemName(directChild, container)
+
+                        local rem = Remotes.ChangeOffer
+                        if not rem then
+                            local rep = game:GetService("ReplicatedStorage")
+                            local net = rep:FindFirstChild("Network")
+                            local ts = net and net:FindFirstChild("TradeService")
+                            rem = ts and ts:FindFirstChild("RE") and ts.RE:FindFirstChild("ChangeOffer")
+                            if rem then Remotes.ChangeOffer = rem end
+                        end
+
+                        if rem and itemName then
+                            pcall(function() rem:FireServer(itemName, amount) end)
+                            Library:Notify({
+                                Title = "Special Trade",
+                                Description = "Offered " .. tostring(amount) .. "x " .. tostring(itemName) .. "!",
+                                Time = 3
+                            })
+                        elseif rem then
+                            pcall(function() rem:FireServer(amount) end)
+                            Library:Notify({
+                                Title = "Special Trade",
+                                Description = "Offered " .. tostring(amount) .. "!",
+                                Time = 3
+                            })
+                        else
+                            Library:Notify({
+                                Title = "Special Trade",
+                                Description = "ChangeOffer remote not found!",
+                                Time = 3
+                            })
+                        end
+                    end
+
+                    input:Destroy()
+                    targetLabel.Visible = true
+                    targetLabel.Text = "Offer Custom"
+                    isInputActive = false
+                end)
+            end
+
+            if clickTarget:IsA("GuiButton") then
+                clickTarget.Activated:Connect(startCustomInput)
+            else
+                clickTarget.InputBegan:Connect(function(inp)
+                    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                        startCustomInput()
+                    end
+                end)
+            end
+        end)
+    end
+
+    local isScanning = false
+    local function scanAndInject()
+        if not Config.SpecialTrade or isScanning then return end
+        local pGui = player:FindFirstChild("PlayerGui")
+        if not pGui then return end
+
+        -- Early exit: jika OfferCustom sudah ada di layar, jangan buang CPU!
+        if pGui:FindFirstChild("OfferCustom", true) then return end
+
+        isScanning = true
+        pcall(function()
+            for _, desc in ipairs(pGui:GetDescendants()) do
+                if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Visible then
+                    local t = desc.Text
+                    if t and t ~= "" then
+                        local clean = t:gsub("%s+", ""):lower()
+                        if clean == "offer1k" or clean:find("offer1k") or clean == "offer1000" or clean:find("offer1000") then
+                            local cur = desc.Parent
+                            while cur and cur ~= pGui do
+                                local hasSiblingOffer = false
+                                for _, sibling in ipairs(cur:GetDescendants()) do
+                                    if (sibling:IsA("TextLabel") or sibling:IsA("TextButton")) and sibling ~= desc then
+                                        local sClean = sibling.Text:gsub("%s+", ""):lower()
+                                        if sClean == "offer1" or sClean:find("offer10") or sClean:find("offer100") then
+                                            hasSiblingOffer = true
+                                            break
+                                        end
+                                    end
+                                end
+
+                                if hasSiblingOffer then
+                                    local runner = desc
+                                    while runner and runner.Parent ~= cur do
+                                        runner = runner.Parent
+                                    end
+                                    if runner and not cur:FindFirstChild("OfferCustom") then
+                                        injectSpecialTrade(cur, runner)
+                                    end
+                                    return
+                                end
+                                cur = cur.Parent
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        isScanning = false
+    end
+
+    -- Fast 0.25s watcher loop (Zero Lag: tidak pakai DescendantAdded yang membombardir event)
+    task.spawn(function()
+        while task.wait(0.25) do
+            if not isScriptRunning or getgenv().CURRENT_ZETROX_INSTANCE ~= SCRIPT_INSTANCE_ID then break end
+            if Config.SpecialTrade then
+                pcall(scanAndInject)
+            end
+        end
+    end)
+end
 
 -- [ZionHub] Engine Loaded Successfully (Muted Console Print)
 
